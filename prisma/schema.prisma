@@ -1,0 +1,159 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SAFARWAY_ADMIN
+  SAFARWAY_USER
+  AGENCY_ADMIN
+  AGENCY_USER
+  CUSTOMER
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum TourType {
+  ADVENTURE
+  CULTURAL
+  WILDLIFE
+  BEACH
+  MOUNTAIN
+  CITY
+  CRUISE
+  OTHER
+}
+
+model User {
+  id             String      @id @default(uuid())
+  name           String?
+  email          String      @unique
+  password       String?
+  phone          String?
+  role           Role
+  status         UserStatus  @default(INVITED)
+  profileImage   String?
+  provider       String?     @default("EMAIL")
+  deviceTokens   String[]
+  agencyId       String?
+  agency         Agency?     @relation(fields: [agencyId], references: [id])
+  customer       Customer?
+  inviteToken    String?     @unique
+  invitedByUserId String?
+  invitedBy      User?       @relation("UserInvites", fields: [invitedByUserId], references: [id])
+  invitedUsers   User[]      @relation("UserInvites")
+  invitedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  // Relations
+  bookings       Booking[]
+}
+
+model Agency {
+  id            String    @id @default(uuid())
+  name          String
+  description   String?
+  address       String?
+  contactEmail  String
+  contactPhone  String
+  logo          String?
+  media         String[]  // Array of media URLs
+  verifiedBy    String?   // ID of the admin who verified
+  verifiedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  users         User[]
+  tourPackages  TourPackage[]
+}
+
+model Customer {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  address   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user      User     @relation(fields: [userId], references: [id])
+  bookings  Booking[]
+}
+
+model TourPackage {
+  id              String    @id @default(uuid())
+  title           String
+  subtitle        String?
+  duration        Int       // in days
+  maxGroupSize    Int
+  pricePerPerson  Float
+  tourType        TourType
+  description     String    @db.Text
+  highlights      String[]  // Array of highlights
+  includedItems   String[]  // Array of included items
+  excludedItems   String[]  // Array of excluded items
+  coverImage      String?
+  galleryImages   String[]  // Array of image URLs
+  phoneNumber     String?
+  email           String?
+  whatsapp        String?
+  cancellationPolicy String? @db.Text
+  additionalInfo  String?   @db.Text
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  agencyId        String
+  agency          Agency     @relation(fields: [agencyId], references: [id])
+  itinerary       Itinerary[]
+  bookings        Booking[]
+}
+
+model Itinerary {
+  id            String   @id @default(uuid())
+  dayNumber     Int
+  title         String
+  description   String   @db.Text
+  activities    Json     // Array of activities with time slots
+  meals         Json     // Object with breakfast, lunch, dinner booleans
+  accommodation Json     // Object with accommodation details
+  transport     Json     // Object with transport details
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  tourPackageId String
+  tourPackage   TourPackage @relation(fields: [tourPackageId], references: [id])
+}
+
+model Booking {
+  id            String   @id @default(uuid())
+  startDate     DateTime
+  numberOfPeople Int
+  totalPrice    Float
+  status        String   @default("PENDING") // PENDING, CONFIRMED, CANCELLED
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+  customerId    String
+  customer      Customer   @relation(fields: [customerId], references: [id])
+  tourPackageId String
+  tourPackage   TourPackage @relation(fields: [tourPackageId], references: [id])
+} 
