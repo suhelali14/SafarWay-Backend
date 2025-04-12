@@ -43,4 +43,9 @@ router.delete(
   revokeInvite
 );
 
+// TODO: Add invite routes here
+router.get('/', (req, res) => {
+  res.json({ message: 'Invite routes working' });
+});
+
 module.exports = router; 

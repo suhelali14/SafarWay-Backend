@@ -286,42 +286,29 @@ const login = async (req, res) => {
   }
 };
 
-
 // Get current user profile
 const getCurrentUser = async (req, res) => {
   try {
+    // req.user is set by the auth middleware
     const user = await prisma.user.findUnique({
       where: { id: req.user.id },
       include: {
         agency: true,
         customer: true,
       },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        role: true,
-        status: true,
-        profileImage: true,
-        agency: {
-          select: {
-            id: true,
-            name: true,
-            logo: true,
-          },
-        },
-        customer: {
-          select: {
-            id: true,
-            address: true,
-          },
-        },
-      },
     });
 
+    if (!user) {
+      return res.status(404).json({
+        message: 'User not found',
+      });
+    }
+
+    // Remove sensitive data
+    const { password, ...userData } = user;
+
     res.json({
-      data: user,
+      data: userData,
     });
   } catch (error) {
     console.error('Get current user error:', error);

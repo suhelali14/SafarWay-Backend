@@ -1,85 +1,51 @@
 const express = require('express');
-const cors = require('cors');
-const dotenv = require('dotenv');
-const path = require('path');
-const initializeApp = require('./utils/init');
-
-// Load environment variables
-dotenv.config();
-
-// Initialize app
-initializeApp();
-
-// Create Express app
-const app = express();
-
-// Middleware
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Serve uploaded files
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+const cors = require('./middleware/cors.middleware');
+const morgan = require('morgan');
+const helmet = require('helmet');
+const compression = require('compression');
+const errorHandler = require('./middleware/error.middleware');
+const { testConnection } = require('./config/database');
 
 // Import routes
 const authRoutes = require('./routes/auth.routes');
-const tourPackageRoutes = require('./routes/tourPackage.routes');
+const tourRoutes = require('./routes/tour.routes');
 const bookingRoutes = require('./routes/booking.routes');
 const uploadRoutes = require('./routes/upload.routes');
 const inviteRoutes = require('./routes/invite.routes');
+const customerRoutes = require('./routes/customer.routes');
+const messageRoutes = require('./routes/message.routes');
+const analyticsRoutes = require('./routes/analytics.routes');
 
-// Use routes
+const app = express();
+
+// Middleware
+app.use(cors);
+app.use(helmet());
+app.use(compression());
+app.use(morgan('dev'));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Test database connection
+testConnection();
+
+// Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/packages', tourPackageRoutes);
+app.use('/api/packages', tourRoutes);
 app.use('/api/bookings', bookingRoutes);
-app.use('/api/upload', uploadRoutes);
-app.use('/api/invite', inviteRoutes);
+app.use('/api/uploads', uploadRoutes);
+app.use('/api/invites', inviteRoutes);
+app.use('/api/customers', customerRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({
-    status: 'error',
-    message: 'Route not found',
-  });
-});
+// Error handling
+app.use(errorHandler);
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-
-  // Handle specific errors
-  if (err.name === 'ValidationError') {
-    return res.status(400).json({
-      status: 'error',
-      message: 'Validation error',
-      errors: err.errors,
-    });
-  }
-
-  if (err.name === 'JsonWebTokenError') {
-    return res.status(401).json({
-      status: 'error',
-      message: 'Invalid token',
-    });
-  }
-
-  if (err.name === 'TokenExpiredError') {
-    return res.status(401).json({
-      status: 'error',
-      message: 'Token expired',
-    });
-  }
-
-  // Default error
-  res.status(err.status || 500).json({
-    status: 'error',
-    message: err.message || 'Internal server error',
-  });
-});
-
-// Start server
 const PORT = process.env.PORT || 3001;
+
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-}); 
+});
+
+module.exports = app; 

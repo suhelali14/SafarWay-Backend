@@ -26,4 +26,9 @@ router.patch(
   updateBookingStatus
 );
 
+// TODO: Add booking routes here
+router.get('/', (req, res) => {
+  res.json({ message: 'Booking routes working' });
+});
+
 module.exports = router; 

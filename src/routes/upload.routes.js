@@ -15,4 +15,9 @@ router.post(
   uploadImage
 );
 
+// TODO: Add upload routes here
+router.get('/', (req, res) => {
+  res.json({ message: 'Upload routes working' });
+});
+
 module.exports = router; 

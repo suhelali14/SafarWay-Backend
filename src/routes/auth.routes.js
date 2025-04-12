@@ -27,4 +27,9 @@ router.post('/login', validateLogin, login);
 router.get('/me', authenticateUser, getCurrentUser);
 router.patch('/profile', authenticateUser, validateUserUpdate, updateProfile);
 
+// TODO: Add auth routes here
+router.get('/', (req, res) => {
+  res.json({ message: 'Auth routes working' });
+});
+
 module.exports = router; 
