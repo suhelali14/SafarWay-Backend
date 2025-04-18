@@ -5,20 +5,21 @@ const {
   completeOnboarding,
   resendInvite,
   revokeInvite,
+  verifyInviteToken,
 } = require('../controllers/invite.controller');
 const {
   validateInviteUser,
   validateOnboarding,
 } = require('../middleware/validation.middleware');
 const {
-  authenticateUser,
+  authenticate,
   authorizeRoles,
 } = require('../middleware/auth.middleware');
 
 // Create invitation (SafarWay Admin/User only)
 router.post(
   '/',
-  authenticateUser,
+  authenticate,
   authorizeRoles(['SAFARWAY_ADMIN', 'SAFARWAY_USER']),
   validateInviteUser,
   createInvite
@@ -27,10 +28,13 @@ router.post(
 // Complete onboarding
 router.post('/onboard', validateOnboarding, completeOnboarding);
 
+// Verify invite token
+router.get('/verify/:token', verifyInviteToken);
+
 // Resend invitation (SafarWay Admin/User only)
 router.post(
   '/:userId/resend',
-  authenticateUser,
+  authenticate,
   authorizeRoles(['SAFARWAY_ADMIN', 'SAFARWAY_USER']),
   resendInvite
 );
@@ -38,12 +42,12 @@ router.post(
 // Revoke invitation (SafarWay Admin/User only)
 router.delete(
   '/:userId',
-  authenticateUser,
+  authenticate,
   authorizeRoles(['SAFARWAY_ADMIN', 'SAFARWAY_USER']),
   revokeInvite
 );
 
-// TODO: Add invite routes here
+// Base route for checking if invite routes are working
 router.get('/', (req, res) => {
   res.json({ message: 'Invite routes working' });
 });

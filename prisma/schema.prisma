@@ -36,50 +36,107 @@ enum TourType {
   OTHER
 }
 
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum RefundStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+  ASSIGNED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
 model User {
-  id             String      @id @default(uuid())
-  name           String?
-  email          String      @unique
-  password       String?
-  phone          String?
-  role           Role
-  status         UserStatus  @default(INVITED)
-  profileImage   String?
-  provider       String?     @default("EMAIL")
-  deviceTokens   String[]
-  agencyId       String?
-  agency         Agency?     @relation(fields: [agencyId], references: [id])
-  customer       Customer?
-  inviteToken    String?     @unique
+  id              String     @id @default(uuid())
+  name            String?
+  email           String     @unique
+  password        String?
+  phone           String?
+  role            Role
+  status          UserStatus @default(INVITED)
+  profileImage    String?
+  provider        String?    @default("EMAIL")
+  deviceTokens    String[]
+  agencyId        String?
+  agency          Agency?    @relation(fields: [agencyId], references: [id])
+  customer        Customer?
+  inviteToken     String?    @unique
   invitedByUserId String?
-  invitedBy      User?       @relation("UserInvites", fields: [invitedByUserId], references: [id])
-  invitedUsers   User[]      @relation("UserInvites")
-  invitedAt      DateTime?
-  completedAt    DateTime?
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
+  invitedBy       User?      @relation("UserInvites", fields: [invitedByUserId], references: [id])
+  invitedUsers    User[]     @relation("UserInvites")
+  invitedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
 
   // Relations
-  bookings       Booking[]
+  bookings             Booking[]
+  refundRequests       RefundRequest[]
+  supportTickets       SupportTicket[]
+  ticketResponses      TicketResponse[]
+  ticketAssignmentLogs TicketAssignmentLog[]
+  sessions             Session[]
+  wishlist             Wishlist[]
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([expiresAt])
 }
 
 model Agency {
-  id            String    @id @default(uuid())
-  name          String
-  description   String?
-  address       String?
-  contactEmail  String
-  contactPhone  String
-  logo          String?
-  media         String[]  // Array of media URLs
-  verifiedBy    String?   // ID of the admin who verified
-  verifiedAt    DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id           String    @id @default(uuid())
+  name         String
+  description  String?
+  address      String?
+  contactEmail String
+  contactPhone String
+  logo         String?
+  media        String[] // Array of media URLs
+  verifiedBy   String? // ID of the admin who verified
+  verifiedAt   DateTime?
+  status       String    @default("PENDING") // PENDING, ACTIVE, INACTIVE, REJECTED
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  coverImage            String?
+  verificationDocuments VerificationDocument[]
+  settings              AgencySettings?
 
   // Relations
-  users         User[]
-  tourPackages  TourPackage[]
+  users        User[]
+  tourPackages TourPackage[]
 }
 
 model Customer {
@@ -90,48 +147,68 @@ model Customer {
   updatedAt DateTime @updatedAt
 
   // Relations
-  user      User     @relation(fields: [userId], references: [id])
-  bookings  Booking[]
+  user     User      @relation(fields: [userId], references: [id])
+  bookings Booking[]
 }
 
 model TourPackage {
-  id              String    @id @default(uuid())
-  title           String
-  subtitle        String?
-  duration        Int       // in days
-  maxGroupSize    Int
-  pricePerPerson  Float
-  tourType        TourType
-  description     String    @db.Text
-  highlights      String[]  // Array of highlights
-  includedItems   String[]  // Array of included items
-  excludedItems   String[]  // Array of excluded items
-  coverImage      String?
-  galleryImages   String[]  // Array of image URLs
-  phoneNumber     String?
-  email           String?
-  whatsapp        String?
-  cancellationPolicy String? @db.Text
-  additionalInfo  String?   @db.Text
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id                String    @id @default(uuid())
+  title             String
+  subtitle          String?
+  summary           String?   @db.Text
+  duration          Int // in days
+  maxGroupSize      Int
+  pricePerPerson    Float
+  price             Float? // For compatibility with existing code
+  discountPrice     Float?
+  priceType         String? // PER_PERSON, TOTAL
+  tourType          TourType
+  description       String    @db.Text
+  highlights        String[] // Array of highlights
+  includedItems     String[] // Array of included items
+  excludedItems     String[] // Array of excluded items
+  minimumAge        Int?
+  maximumPeople     Int?
+  isFlexible        Boolean?  @default(false)
+  difficultyLevel   String?
+  startDate         DateTime?
+  endDate           DateTime?
+  validFrom         DateTime? // Added for date validation period
+  validTill         DateTime? // Added for date validation period
+  coverImage        String?
+  galleryImages     String[] // Array of image URLs
+  phoneNumber       String?
+  email             String?
+  whatsapp          String?
+  cancelationPolicy String?   @db.Text
+  additionalInfo    String?   @db.Text
+  status            String    @default("ACTIVE") // ACTIVE, INACTIVE, CANCELLED
+  destination       String?   // Added for backward compatibility with existing API
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
 
   // Relations
-  agencyId        String
-  agency          Agency     @relation(fields: [agencyId], references: [id])
-  itinerary       Itinerary[]
-  bookings        Booking[]
+  agencyId     String
+  agency       Agency        @relation(fields: [agencyId], references: [id])
+  itinerary    Itinerary[]
+  bookings     Booking[]
+  wishlist     Wishlist[]
+  offers       Offer[]
+  destinations Destination[]
+  inclusions   Inclusion[]
+  exclusions   Exclusion[]
 }
 
 model Itinerary {
   id            String   @id @default(uuid())
-  dayNumber     Int
+  day           Int
   title         String
   description   String   @db.Text
-  activities    Json     // Array of activities with time slots
-  meals         Json     // Object with breakfast, lunch, dinner booleans
-  accommodation Json     // Object with accommodation details
-  transport     Json     // Object with transport details
+  activities    Json // Array of activities with time slots
+  meals         Json // Object with breakfast, lunch, dinner booleans
+  accommodation Json // Object with accommodation details
+  transport     Json // Object with transport details
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -141,19 +218,168 @@ model Itinerary {
 }
 
 model Booking {
-  id            String   @id @default(uuid())
-  startDate     DateTime
-  numberOfPeople Int
-  totalPrice    Float
-  status        String   @default("PENDING") // PENDING, CONFIRMED, CANCELLED
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id              String        @id @default(uuid())
+  startDate       DateTime
+  endDate         DateTime? // Added endDate field
+  numberOfPeople  Int
+  totalPrice      Float
+  status          BookingStatus @default(PENDING)
+  paymentStatus   PaymentStatus @default(PENDING)
+  refundRequested Boolean       @default(false)
+  refundStatus    RefundStatus?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 
   // Relations
   userId        String
-  user          User     @relation(fields: [userId], references: [id])
+  user          User           @relation(fields: [userId], references: [id])
   customerId    String
-  customer      Customer   @relation(fields: [customerId], references: [id])
+  customer      Customer       @relation(fields: [customerId], references: [id])
+  tourPackageId String
+  tourPackage   TourPackage    @relation(fields: [tourPackageId], references: [id])
+  refundRequest RefundRequest?
+}
+
+model RefundRequest {
+  id        String       @id @default(uuid())
+  bookingId String       @unique
+  booking   Booking      @relation(fields: [bookingId], references: [id])
+  userId    String
+  user      User         @relation(fields: [userId], references: [id])
+  amount    Float
+  reason    String       @db.Text
+  status    RefundStatus @default(PENDING)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+}
+
+model SupportTicket {
+  id             String                @id @default(uuid())
+  userId         String
+  user           User                  @relation(fields: [userId], references: [id])
+  subject        String
+  message        String                @db.Text
+  status         TicketStatus          @default(OPEN)
+  priority       TicketPriority        @default(MEDIUM)
+  responses      TicketResponse[]
+  assignmentLogs TicketAssignmentLog[]
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+}
+
+model TicketResponse {
+  id        String        @id @default(uuid())
+  ticketId  String
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id])
+  userId    String
+  user      User          @relation(fields: [userId], references: [id])
+  message   String        @db.Text
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+}
+
+model TicketAssignmentLog {
+  id             String        @id @default(uuid())
+  ticketId       String
+  ticket         SupportTicket @relation(fields: [ticketId], references: [id])
+  userId         String
+  user           User          @relation(fields: [userId], references: [id])
+  previousStatus TicketStatus?
+  newStatus      TicketStatus?
+  message        String?       @db.Text
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+}
+
+model Wishlist {
+  id            String      @id @default(uuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id])
   tourPackageId String
   tourPackage   TourPackage @relation(fields: [tourPackageId], references: [id])
-} 
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([userId, tourPackageId])
+}
+
+model Offer {
+  id            String       @id @default(uuid())
+  title         String
+  description   String       @db.Text
+  discountType  String // PERCENTAGE, FIXED
+  discountValue Float
+  startDate     DateTime
+  endDate       DateTime
+  code          String?      @unique
+  tourPackageId String?
+  tourPackage   TourPackage? @relation(fields: [tourPackageId], references: [id])
+  status        String       @default("ACTIVE") // ACTIVE, INACTIVE
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+}
+
+model VerificationDocument {
+  id           String   @id @default(uuid())
+  name         String
+  documentType String
+  documentUrl  String
+  status       String   @default("pending") // pending, approved, rejected
+  uploadedAt   DateTime
+
+  agency   Agency @relation(fields: [agencyId], references: [id])
+  agencyId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AgencySettings {
+  id              String  @id @default(uuid())
+  notifyBookings  Boolean @default(true)
+  notifyMessages  Boolean @default(true)
+  notifyMarketing Boolean @default(false)
+  isPublic        Boolean @default(true)
+
+  agency   Agency @relation(fields: [agencyId], references: [id])
+  agencyId String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Destination {
+  id          String  @id @default(uuid())
+  name        String
+  description String? @db.Text
+  image       String?
+
+  tourPackages TourPackage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Inclusion {
+  id          String  @id @default(uuid())
+  name        String
+  description String? @db.Text
+  icon        String?
+
+  tourPackages TourPackage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Exclusion {
+  id          String  @id @default(uuid())
+  name        String
+  description String? @db.Text
+  icon        String?
+
+  tourPackages TourPackage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

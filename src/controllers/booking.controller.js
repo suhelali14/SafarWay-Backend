@@ -1,251 +1,305 @@
 const { PrismaClient } = require('@prisma/client');
-
 const prisma = new PrismaClient();
+const ApiError = require('../utils/ApiError');
 
-const createBooking = async (req, res) => {
+// Get all bookings (Admin/Agency only)
+exports.getAllBookings = async (req, res, next) => {
   try {
-    const { tourPackageId, startDate, numberOfPeople } = req.body;
+    const { page = 1, limit = 10, status } = req.query;
+    const skip = (page - 1) * limit;
 
-    // Get customer ID from the authenticated user
-    const customer = await prisma.customer.findUnique({
-      where: { userId: req.user.id },
-    });
-
-    if (!customer) {
-      return res.status(404).json({ message: 'Customer not found' });
+    const where = {};
+    if (status) {
+      where.status = status;
     }
 
-    // Get tour package to calculate total price
+    const [bookings, total] = await Promise.all([
+      prisma.booking.findMany({
+        where,
+        skip,
+        take: Number(limit),
+        include: {
+          tourPackage: true,
+          customer: true,
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      }),
+      prisma.booking.count({ where }),
+    ]);
+
+    res.json({
+      success: true,
+      data: bookings,
+      pagination: {
+        total,
+        page: Number(page),
+        limit: Number(limit),
+        pages: Math.ceil(total / limit),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get booking by ID
+exports.getBookingById = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const booking = await prisma.booking.findUnique({
+      where: { id },
+      include: {
+        tourPackage: true,
+        customer: true,
+      },
+    });
+
+    if (!booking) {
+      throw new ApiError(404, 'Booking not found');
+    }
+
+    // Check if user has permission to view this booking
+    if (
+      req.user.role !== 'SAFARWAY_ADMIN' &&
+      req.user.role !== 'AGENCY_ADMIN' &&
+      booking.customerId !== req.user.id
+    ) {
+      throw new ApiError(403, 'Not authorized to view this booking');
+    }
+
+    res.json({
+      success: true,
+      data: booking,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Create new booking
+exports.createBooking = async (req, res, next) => {
+  try {
+    const {
+      tourPackageId,
+      startDate,
+      numberOfPeople,
+      specialRequests,
+      contactInfo,
+    } = req.body;
+
+    // Check if tour package exists
     const tourPackage = await prisma.tourPackage.findUnique({
       where: { id: tourPackageId },
     });
 
     if (!tourPackage) {
-      return res.status(404).json({ message: 'Tour package not found' });
+      throw new ApiError(404, 'Tour package not found');
     }
-
-    // Calculate total price
-    const totalPrice = tourPackage.pricePerPerson * numberOfPeople;
 
     // Create booking
     const booking = await prisma.booking.create({
       data: {
+        tourPackageId,
+        customerId: req.user.id,
         startDate: new Date(startDate),
         numberOfPeople,
-        totalPrice,
+        specialRequests,
+        contactInfo,
         status: 'PENDING',
-        customerId: customer.id,
-        tourPackageId,
+        totalAmount: tourPackage.price * numberOfPeople,
       },
       include: {
-        tourPackage: {
-          include: {
-            agency: {
-              include: {
-                user: {
-                  select: {
-                    name: true,
-                    email: true,
-                    phone: true,
-                  },
-                },
-              },
-            },
-          },
-        },
+        tourPackage: true,
       },
     });
 
     res.status(201).json({
-      message: 'Booking created successfully',
-      booking,
+      success: true,
+      data: booking,
     });
   } catch (error) {
-    console.error('Create booking error:', error);
-    res.status(500).json({ message: 'Error creating booking' });
+    next(error);
   }
 };
 
-const getCustomerBookings = async (req, res) => {
-  try {
-    const customer = await prisma.customer.findUnique({
-      where: { userId: req.user.id },
-    });
-
-    if (!customer) {
-      return res.status(404).json({ message: 'Customer not found' });
-    }
-
-    const bookings = await prisma.booking.findMany({
-      where: { customerId: customer.id },
-      include: {
-        tourPackage: {
-          include: {
-            agency: {
-              include: {
-                user: {
-                  select: {
-                    name: true,
-                    email: true,
-                    phone: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    res.json(bookings);
-  } catch (error) {
-    console.error('Get customer bookings error:', error);
-    res.status(500).json({ message: 'Error fetching bookings' });
-  }
-};
-
-const getBookingById = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const booking = await prisma.booking.findUnique({
-      where: { id },
-      include: {
-        tourPackage: {
-          include: {
-            agency: {
-              include: {
-                user: {
-                  select: {
-                    name: true,
-                    email: true,
-                    phone: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-        customer: {
-          include: {
-            user: {
-              select: {
-                name: true,
-                email: true,
-                phone: true,
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!booking) {
-      return res.status(404).json({ message: 'Booking not found' });
-    }
-
-    // Check if user has permission to view this booking
-    if (
-      req.user.role === 'CUSTOMER' &&
-      booking.customer.userId !== req.user.id
-    ) {
-      return res.status(403).json({
-        message: 'Not authorized to view this booking',
-      });
-    }
-
-    if (
-      req.user.role === 'AGENCY' &&
-      booking.tourPackage.agency.userId !== req.user.id
-    ) {
-      return res.status(403).json({
-        message: 'Not authorized to view this booking',
-      });
-    }
-
-    res.json(booking);
-  } catch (error) {
-    console.error('Get booking error:', error);
-    res.status(500).json({ message: 'Error fetching booking' });
-  }
-};
-
-const updateBookingStatus = async (req, res) => {
+// Update booking status
+exports.updateBookingStatus = async (req, res, next) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
 
-    // Check if booking exists
     const booking = await prisma.booking.findUnique({
       where: { id },
       include: {
-        tourPackage: {
-          include: { agency: true },
-        },
+        tourPackage: true,
       },
     });
 
     if (!booking) {
-      return res.status(404).json({ message: 'Booking not found' });
+      throw new ApiError(404, 'Booking not found');
     }
 
     // Check if user has permission to update this booking
     if (
-      req.user.role === 'AGENCY' &&
-      booking.tourPackage.agency.userId !== req.user.id
+      req.user.role !== 'SAFARWAY_ADMIN' &&
+      (req.user.role !== 'AGENCY_ADMIN' ||
+        booking.tourPackage.agencyId !== req.user.agencyId)
     ) {
-      return res.status(403).json({
-        message: 'Not authorized to update this booking',
-      });
+      throw new ApiError(403, 'Not authorized to update this booking');
     }
 
-    // Update booking status
     const updatedBooking = await prisma.booking.update({
       where: { id },
       data: { status },
       include: {
-        tourPackage: {
-          include: {
-            agency: {
-              include: {
-                user: {
-                  select: {
-                    name: true,
-                    email: true,
-                    phone: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-        customer: {
-          include: {
-            user: {
-              select: {
-                name: true,
-                email: true,
-                phone: true,
-              },
-            },
-          },
-        },
+        tourPackage: true,
+        customer: true,
       },
     });
 
     res.json({
-      message: 'Booking status updated successfully',
-      booking: updatedBooking,
+      success: true,
+      data: updatedBooking,
     });
   } catch (error) {
-    console.error('Update booking status error:', error);
-    res.status(500).json({ message: 'Error updating booking status' });
+    next(error);
   }
 };
 
-module.exports = {
-  createBooking,
-  getCustomerBookings,
-  getBookingById,
-  updateBookingStatus,
+// Get customer's bookings
+exports.getMyBookings = async (req, res, next) => {
+  try {
+    const { page = 1, limit = 10, status } = req.query;
+    const skip = (page - 1) * limit;
+
+    const where = {
+      customerId: req.user.id,
+    };
+    if (status) {
+      where.status = status;
+    }
+
+    const [bookings, total] = await Promise.all([
+      prisma.booking.findMany({
+        where,
+        skip,
+        take: Number(limit),
+        include: {
+          tourPackage: true,
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      }),
+      prisma.booking.count({ where }),
+    ]);
+
+    res.json({
+      success: true,
+      data: bookings,
+      pagination: {
+        total,
+        page: Number(page),
+        limit: Number(limit),
+        pages: Math.ceil(total / limit),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Cancel booking
+exports.cancelBooking = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const booking = await prisma.booking.findUnique({
+      where: { id },
+    });
+
+    if (!booking) {
+      throw new ApiError(404, 'Booking not found');
+    }
+
+    if (booking.customerId !== req.user.id) {
+      throw new ApiError(403, 'Not authorized to cancel this booking');
+    }
+
+    if (booking.status !== 'PENDING' && booking.status !== 'CONFIRMED') {
+      throw new ApiError(400, 'Booking cannot be cancelled');
+    }
+
+    const updatedBooking = await prisma.booking.update({
+      where: { id },
+      data: { status: 'CANCELLED' },
+      include: {
+        tourPackage: true,
+      },
+    });
+
+    res.json({
+      success: true,
+      data: updatedBooking,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get agency bookings
+exports.getAgencyBookings = async (req, res, next) => {
+  try {
+    const { agencyId } = req.params;
+    const { page = 1, limit = 10, status } = req.query;
+    const skip = (page - 1) * limit;
+
+    // Check if user has permission to view agency bookings
+    if (
+      req.user.role !== 'SAFARWAY_ADMIN' &&
+      (req.user.role !== 'AGENCY_ADMIN' || req.user.agencyId !== agencyId)
+    ) {
+      throw new ApiError(403, 'Not authorized to view agency bookings');
+    }
+
+    const where = {
+      tourPackage: {
+        agencyId,
+      },
+    };
+    if (status) {
+      where.status = status;
+    }
+
+    const [bookings, total] = await Promise.all([
+      prisma.booking.findMany({
+        where,
+        skip,
+        take: Number(limit),
+        include: {
+          tourPackage: true,
+          customer: true,
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      }),
+      prisma.booking.count({ where }),
+    ]);
+
+    res.json({
+      success: true,
+      data: bookings,
+      pagination: {
+        total,
+        page: Number(page),
+        limit: Number(limit),
+        pages: Math.ceil(total / limit),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
 }; 

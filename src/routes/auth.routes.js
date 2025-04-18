@@ -7,6 +7,7 @@ const {
   login,
   getCurrentUser,
   updateProfile,
+  verifyToken,
 } = require('../controllers/auth.controller');
 const {
   validateUserRegistration,
@@ -15,7 +16,7 @@ const {
   validateLogin,
   validateUserUpdate,
 } = require('../middleware/validation.middleware');
-const { authenticateUser } = require('../middleware/auth.middleware');
+const { authenticate } = require('../middleware/auth.middleware');
 
 // Public routes
 router.post('/register/customer', validateUserRegistration, registerCustomer);
@@ -24,8 +25,9 @@ router.post('/register/agency-user', validateAgencyUserRegistration, registerAge
 router.post('/login', validateLogin, login);
 
 // Protected routes
-router.get('/me', authenticateUser, getCurrentUser);
-router.patch('/profile', authenticateUser, validateUserUpdate, updateProfile);
+router.get('/me', authenticate, getCurrentUser);
+router.get('/verify', authenticate, verifyToken);
+router.patch('/profile', authenticate, validateUserUpdate, updateProfile);
 
 // TODO: Add auth routes here
 router.get('/', (req, res) => {

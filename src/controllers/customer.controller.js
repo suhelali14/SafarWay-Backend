@@ -478,4 +478,514 @@ exports.getCustomerBookings = async (req, res) => {
       error: error.message,
     });
   }
+};
+
+// Get customer profile
+exports.getProfile = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        customer: true
+      }
+    });
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User profile not found'
+      });
+    }
+    
+    // Get stats
+    const totalBookings = await prisma.booking.count({
+      where: { userId }
+    });
+    
+    const wishlistCount = await prisma.wishlist.count({
+      where: { userId }
+    });
+    
+    const profile = {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      profileImage: user.profileImage,
+      role: user.role,
+      customerId: user.customer?.id,
+      address: user.customer?.address,
+      stats: {
+        totalBookings,
+        wishlistCount
+      }
+    };
+    
+    res.status(200).json({
+      success: true,
+      data: profile
+    });
+  } catch (error) {
+    console.error('Error fetching profile:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch profile',
+      error: error.message
+    });
+  }
+};
+
+// Get my bookings
+exports.getMyBookings = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { status } = req.query;
+    
+    const where = { userId };
+    if (status) {
+      where.status = status;
+    }
+    
+    const bookings = await prisma.booking.findMany({
+      where,
+      include: {
+        tourPackage: {
+          select: {
+            id: true,
+            title: true,
+            subtitle: true,
+            coverImage: true,
+            pricePerPerson: true,
+            duration: true,
+            tourType: true,
+            agency: {
+              select: {
+                id: true,
+                name: true
+              }
+            }
+          }
+        }
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+    
+    res.status(200).json({
+      success: true,
+      data: bookings,
+      count: bookings.length
+    });
+  } catch (error) {
+    console.error('Error fetching bookings:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch bookings',
+      error: error.message
+    });
+  }
+};
+
+// Get ongoing trips
+exports.getOngoingTrips = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const today = new Date();
+    
+    const ongoingTrips = await prisma.booking.findMany({
+      where: {
+        userId,
+        status: 'CONFIRMED',
+        startDate: {
+          lte: today
+        },
+        endDate: {
+          gte: today
+        }
+      },
+      include: {
+        tourPackage: {
+          select: {
+            id: true,
+            title: true,
+            subtitle: true,
+            coverImage: true,
+            duration: true,
+            agency: {
+              select: {
+                id: true,
+                name: true
+              }
+            }
+          }
+        }
+      }
+    });
+    
+    res.status(200).json({
+      success: true,
+      data: ongoingTrips,
+      count: ongoingTrips.length
+    });
+  } catch (error) {
+    console.error('Error fetching ongoing trips:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch ongoing trips',
+      error: error.message
+    });
+  }
+};
+
+// Get upcoming trips
+exports.getUpcomingTrips = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const today = new Date();
+    const thirtyDaysLater = new Date(today);
+    thirtyDaysLater.setDate(today.getDate() + 30);
+    
+    const upcomingTrips = await prisma.booking.findMany({
+      where: {
+        userId,
+        status: 'CONFIRMED',
+        startDate: {
+          gt: today,
+          lte: thirtyDaysLater
+        }
+      },
+      include: {
+        tourPackage: {
+          select: {
+            id: true,
+            title: true,
+            subtitle: true,
+            coverImage: true,
+            duration: true,
+            agency: {
+              select: {
+                id: true,
+                name: true
+              }
+            }
+          }
+        }
+      },
+      orderBy: {
+        startDate: 'asc'
+      }
+    });
+    
+    // Calculate days remaining for each trip
+    const processedTrips = upcomingTrips.map(trip => {
+      const startDate = new Date(trip.startDate);
+      const currentDate = new Date();
+      const daysLeft = Math.ceil((startDate - currentDate) / (1000 * 60 * 60 * 24));
+      
+      return {
+        ...trip,
+        daysLeft
+      };
+    });
+    
+    res.status(200).json({
+      success: true,
+      data: processedTrips,
+      count: processedTrips.length
+    });
+  } catch (error) {
+    console.error('Error fetching upcoming trips:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch upcoming trips',
+      error: error.message
+    });
+  }
+};
+
+// Get recommended packages
+exports.getRecommendedPackages = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    // Get user's past bookings for preferences
+    const userBookings = await prisma.booking.findMany({
+      where: { userId },
+      include: {
+        tourPackage: {
+          select: {
+            id: true,
+            tourType: true
+          }
+        }
+      }
+    });
+    
+    // Extract preferred tour types
+    const preferredTourTypes = userBookings
+      .map(booking => booking.tourPackage.tourType)
+      .reduce((acc, type) => {
+        acc[type] = (acc[type] || 0) + 1;
+        return acc;
+      }, {});
+    
+    // Get the user's most preferred tour type
+    let mostPreferredType = null;
+    let maxCount = 0;
+    
+    for (const [type, count] of Object.entries(preferredTourTypes)) {
+      if (count > maxCount) {
+        maxCount = count;
+        mostPreferredType = type;
+      }
+    }
+    
+    // Find recommended packages
+    let recommendedPackages;
+    
+    if (mostPreferredType) {
+      // If user has preferences, recommend based on that
+      recommendedPackages = await prisma.tourPackage.findMany({
+        where: {
+          tourType: mostPreferredType,
+          status: 'ACTIVE'
+        },
+        include: {
+          agency: {
+            select: {
+              id: true,
+              name: true
+            }
+          }
+        },
+        take: 5
+      });
+    } else {
+      // Otherwise, recommend popular packages
+      recommendedPackages = await prisma.tourPackage.findMany({
+        where: {
+          status: 'ACTIVE'
+        },
+        include: {
+          agency: {
+            select: {
+              id: true,
+              name: true
+            }
+          },
+          bookings: {
+            select: {
+              id: true
+            }
+          }
+        },
+        orderBy: {
+          bookings: {
+            _count: 'desc'
+          }
+        },
+        take: 5
+      });
+    }
+    
+    // Format data
+    const formattedPackages = recommendedPackages.map(pkg => ({
+      id: pkg.id,
+      title: pkg.title,
+      subtitle: pkg.subtitle,
+      price: pkg.pricePerPerson,
+      duration: pkg.duration,
+      tourType: pkg.tourType,
+      coverImage: pkg.coverImage,
+      agency: pkg.agency,
+      bookingCount: pkg.bookings?.length || 0
+    }));
+    
+    res.status(200).json({
+      success: true,
+      data: formattedPackages
+    });
+  } catch (error) {
+    console.error('Error fetching recommended packages:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch recommended packages',
+      error: error.message
+    });
+  }
+};
+
+// Get wishlist/saved packages
+exports.getWishlist = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    const wishlist = await prisma.wishlist.findMany({
+      where: { userId },
+      include: {
+        tourPackage: {
+          include: {
+            agency: {
+              select: {
+                id: true,
+                name: true
+              }
+            }
+          }
+        }
+      }
+    });
+    
+    const formattedWishlist = wishlist.map(item => ({
+      id: item.id,
+      package: {
+        id: item.tourPackage.id,
+        title: item.tourPackage.title,
+        subtitle: item.tourPackage.subtitle,
+        price: item.tourPackage.pricePerPerson,
+        duration: item.tourPackage.duration,
+        tourType: item.tourPackage.tourType,
+        coverImage: item.tourPackage.coverImage,
+        agency: item.tourPackage.agency
+      },
+      addedAt: item.createdAt
+    }));
+    
+    res.status(200).json({
+      success: true,
+      data: formattedWishlist,
+      count: formattedWishlist.length
+    });
+  } catch (error) {
+    console.error('Error fetching wishlist:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch wishlist',
+      error: error.message
+    });
+  }
+};
+
+// Get valid offers and promotions
+exports.getValidOffers = async (req, res) => {
+  try {
+    const today = new Date();
+    
+    const offers = await prisma.offer.findMany({
+      where: {
+        startDate: {
+          lte: today
+        },
+        endDate: {
+          gte: today
+        },
+        status: 'ACTIVE'
+      },
+      include: {
+        tourPackage: {
+          select: {
+            id: true,
+            title: true,
+            coverImage: true
+          }
+        }
+      }
+    });
+    
+    res.status(200).json({
+      success: true,
+      data: offers
+    });
+  } catch (error) {
+    console.error('Error fetching offers:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch offers',
+      error: error.message
+    });
+  }
+};
+
+// Get customer dashboard stats
+exports.getDashboardStats = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const today = new Date();
+    
+    // Get counts for different booking statuses
+    const [totalBookings, confirmedBookings, completedBookings, cancelledBookings] = await Promise.all([
+      prisma.booking.count({ where: { userId } }),
+      prisma.booking.count({ where: { userId, status: 'CONFIRMED' } }),
+      prisma.booking.count({ where: { userId, status: 'COMPLETED' } }),
+      prisma.booking.count({ where: { userId, status: 'CANCELLED' } })
+    ]);
+    
+    // Get ongoing trips
+    const ongoingTrips = await prisma.booking.count({
+      where: {
+        userId,
+        status: 'CONFIRMED',
+        startDate: {
+          lte: today
+        },
+        endDate: {
+          gte: today
+        }
+      }
+    });
+    
+    // Get upcoming trips
+    const upcomingTrips = await prisma.booking.count({
+      where: {
+        userId,
+        status: 'CONFIRMED',
+        startDate: {
+          gt: today
+        }
+      }
+    });
+    
+    // Get wishlist count
+    const savedPackages = await prisma.wishlist.count({
+      where: { userId }
+    });
+    
+    // Get open support tickets
+    const openSupportTickets = await prisma.supportTicket.count({
+      where: {
+        userId,
+        status: {
+          in: ['OPEN', 'IN_PROGRESS']
+        }
+      }
+    });
+    
+    const stats = {
+      bookings: {
+        total: totalBookings,
+        confirmed: confirmedBookings,
+        completed: completedBookings,
+        cancelled: cancelledBookings
+      },
+      ongoingTrips,
+      upcomingTrips,
+      savedPackages,
+      openSupportTickets
+    };
+    
+    res.status(200).json({
+      success: true,
+      data: stats
+    });
+  } catch (error) {
+    console.error('Error fetching dashboard stats:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch dashboard stats',
+      error: error.message
+    });
+  }
 }; 

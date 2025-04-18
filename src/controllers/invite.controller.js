@@ -58,7 +58,7 @@ const createInvite = async (req, res) => {
     const { email, role, agencyId } = req.body;
 
     // Validate role
-    if (!['AGENCY_ADMIN', 'AGENCY_USER'].includes(role)) {
+    if (!['AGENCY_ADMIN', 'AGENCY_USER', 'SAFARWAY_ADMIN', 'SAFARWAY_USER'].includes(role)) {
       return res.status(400).json({
         message: 'Invalid role. Must be AGENCY_ADMIN or AGENCY_USER',
       });
@@ -117,7 +117,22 @@ const completeOnboarding = async (req, res) => {
     const { token, name, phone, password } = req.body;
 
     // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_INVITE_SECRET);
+    let decoded;
+    try {
+      // Try with primary token secret
+      decoded = jwt.verify(token, process.env.INVITE_TOKEN_SECRET);
+    } catch (firstError) {
+      try {
+        // If that fails, try with fallback token secret
+        decoded = jwt.verify(token, process.env.JWT_INVITE_SECRET);
+      } catch (secondError) {
+        console.error('Token verification failed with both secrets:', firstError);
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid or expired invitation token',
+        });
+      }
+    }
 
     // Find user
     const user = await prisma.user.findFirst({
@@ -257,9 +272,79 @@ const revokeInvite = async (req, res) => {
   }
 };
 
+// Verify invitation token without completing onboarding
+const verifyInviteToken = async (req, res) => {
+  try {
+    const { token } = req.params;
+    
+    // Verify token format and structure
+    let decoded;
+    try {
+      // Try with primary token secret
+      decoded = jwt.verify(token, process.env.INVITE_TOKEN_SECRET);
+    } catch (firstError) {
+      try {
+        // If that fails, try with fallback token secret
+        decoded = jwt.verify(token, process.env.JWT_INVITE_SECRET);
+      } catch (secondError) {
+        console.error('Token verification failed with both secrets:', firstError);
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid or expired invitation token',
+        });
+      }
+    }
+    
+    // Check if token exists in database
+    const user = await prisma.user.findFirst({
+      where: {
+        email: decoded.email,
+        inviteToken: token,
+        status: 'INVITED',
+      },
+      include: {
+        agency: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid or expired invitation token',
+      });
+    }
+
+    // Return user info (without sensitive data)
+    res.json({
+      success: true,
+      message: 'Token verified successfully',
+      data: {
+        email: user.email,
+        role: user.role,
+        agencyId: user.agencyId,
+        agencyName: user.agency?.name || null,
+        invitedAt: user.invitedAt,
+      },
+    });
+  } catch (error) {
+    console.error('Token verification error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error verifying invitation token',
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   createInvite,
   completeOnboarding,
   resendInvite,
   revokeInvite,
+  verifyInviteToken,
 }; 

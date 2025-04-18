@@ -364,6 +364,42 @@ const updateProfile = async (req, res) => {
   }
 };
 
+// Verify token and return user data
+const verifyToken = async (req, res) => {
+  try {
+    // req.user is set by the auth middleware
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      include: {
+        agency: true,
+        customer: true,
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        message: 'User not found',
+      });
+    }
+
+    // Remove sensitive data
+    const { password, ...userData } = user;
+
+    res.json({
+      message: 'Token verified successfully',
+      data: {
+        user: userData,
+      },
+    });
+  } catch (error) {
+    console.error('Token verification error:', error);
+    res.status(500).json({
+      message: 'Error verifying token',
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   registerCustomer,
   registerAgency,
@@ -371,4 +407,5 @@ module.exports = {
   login,
   getCurrentUser,
   updateProfile,
+  verifyToken,
 }; 

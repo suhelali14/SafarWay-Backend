@@ -6,36 +6,32 @@ const prisma = new PrismaClient();
 /**
  * Middleware to authenticate users using JWT
  */
-const authenticateUser = async (req, res, next) => {
+const authenticate = async (req, res, next) => {
   try {
-    const token = req.header('Authorization')?.replace('Bearer ', '');
-
+    const token = req.headers.authorization?.split(' ')[1];
     if (!token) {
       return res.status(401).json({ message: 'Authentication required' });
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const user = await prisma.user.findUnique({
-      where: { id: decoded.userId },
-      include: {
-        agency: true,
-        customer: true,
-      },
+      where: { id: decoded.userId }
     });
 
     if (!user) {
       return res.status(401).json({ message: 'User not found' });
     }
 
-    if (user.status !== 'ACTIVE') {
-      return res.status(403).json({ message: 'Account is not active' });
-    }
-
     req.user = user;
-    req.token = token;
     next();
   } catch (error) {
-    res.status(401).json({ message: 'Invalid token ' + error.message });
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({ message: 'Invalid token' });
+    }
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Token expired' });
+    }
+    res.status(500).json({ message: 'Authentication error', error: error.message });
   }
 };
 
@@ -80,9 +76,33 @@ const isResourceOwner = (resourceUserId) => {
   };
 };
 
+const authorizeAdmin = (req, res, next) => {
+  if (req.user.role !== 'SAFARWAY_ADMIN') {
+    return res.status(403).json({ message: 'Admin access required' });
+  }
+  next();
+};
+
+const authorizeAgency = (req, res, next) => {
+  if (!['AGENCY_ADMIN', 'AGENCY_USER'].includes(req.user.role)) {
+    return res.status(403).json({ message: 'Agency access required' });
+  }
+  next();
+};
+
+const authorizeAgencyAdmin = (req, res, next) => {
+  if (req.user.role !== 'AGENCY_ADMIN') {
+    return res.status(403).json({ message: 'Agency admin access required' });
+  }
+  next();
+};
+
 module.exports = {
-  authenticateUser,
+  authenticate,
   authorizeRoles,
   requireAgency,
   isResourceOwner,
+  authorizeAdmin,
+  authorizeAgency,
+  authorizeAgencyAdmin
 }; 

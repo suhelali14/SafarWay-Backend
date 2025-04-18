@@ -1,24 +1,42 @@
 const express = require('express');
 const router = express.Router();
-const customerController = require('../controllers/customer.controller');
-const { authenticateUser, authorizeRoles } = require('../middleware/auth.middleware');
+const {
+  getAllCustomers,
+  getCustomerById,
+  createCustomer,
+  updateCustomer,
+  deleteCustomer,
+  getProfile,
+  getMyBookings,
+  getOngoingTrips,
+  getUpcomingTrips,
+  getRecommendedPackages,
+  getWishlist,
+  getValidOffers,
+  getDashboardStats
+} = require('../controllers/customer.controller');
+const { authenticate, authorizeRoles } = require('../middleware/auth.middleware');
 
-// Get all customers (admin and agency only)
-router.get('/', authenticateUser, authorizeRoles(['SAFARWAY_ADMIN', 'AGENCY_ADMIN']), customerController.getAllCustomers);
+// Base route for checking if routes are working
+router.get('/', (req, res) => {
+  res.json({ message: 'Customer routes working' });
+});
 
-// Get customer by ID (admin, agency, and the customer themselves)
-router.get('/:id', authenticateUser, authorizeRoles(['SAFARWAY_ADMIN', 'AGENCY_ADMIN', 'CUSTOMER']), customerController.getCustomerById);
+// Routes for admin to manage customers
+router.get('/all', authenticate, authorizeRoles(['SAFARWAY_ADMIN']), getAllCustomers);
+router.get('/details/:id', authenticate, authorizeRoles(['SAFARWAY_ADMIN']), getCustomerById);
+router.post('/', authenticate, authorizeRoles(['SAFARWAY_ADMIN']), createCustomer);
+router.put('/:id', authenticate, authorizeRoles(['SAFARWAY_ADMIN']), updateCustomer);
+router.delete('/:id', authenticate, authorizeRoles(['SAFARWAY_ADMIN']), deleteCustomer);
 
-// Create a new customer (admin and agency only)
-router.post('/', authenticateUser, authorizeRoles(['SAFARWAY_ADMIN', 'AGENCY_ADMIN']), customerController.createCustomer);
-
-// Update customer (admin, agency, and the customer themselves)
-router.put('/:id', authenticateUser, authorizeRoles(['SAFARWAY_ADMIN', 'AGENCY_ADMIN', 'CUSTOMER']), customerController.updateCustomer);
-
-// Delete customer (admin and agency only)
-router.delete('/:id', authenticateUser, authorizeRoles(['SAFARWAY_ADMIN', 'AGENCY_ADMIN']), customerController.deleteCustomer);
-
-// Get customer bookings (admin, agency, and the customer themselves)
-router.get('/:id/bookings', authenticateUser, authorizeRoles(['SAFARWAY_ADMIN', 'AGENCY_ADMIN', 'CUSTOMER']), customerController.getCustomerBookings);
+// Customer dashboard routes - protected by customer role
+router.get('/profile', authenticate, authorizeRoles(['CUSTOMER']), getProfile);
+router.get('/bookings', authenticate, authorizeRoles(['CUSTOMER']), getMyBookings);
+router.get('/trips/ongoing', authenticate, authorizeRoles(['CUSTOMER']), getOngoingTrips);
+router.get('/trips/upcoming', authenticate, authorizeRoles(['CUSTOMER']), getUpcomingTrips);
+router.get('/packages/recommended', authenticate, authorizeRoles(['CUSTOMER']), getRecommendedPackages);
+router.get('/wishlist', authenticate, authorizeRoles(['CUSTOMER']), getWishlist);
+router.get('/offers', authenticate, authorizeRoles(['CUSTOMER']), getValidOffers);
+router.get('/dashboard/stats', authenticate, authorizeRoles(['CUSTOMER']), getDashboardStats);
 
 module.exports = router; 
