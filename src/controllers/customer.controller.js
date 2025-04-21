@@ -989,3 +989,182 @@ exports.getDashboardStats = async (req, res) => {
     });
   }
 }; 
+
+// Get all tour packages with pagination and filtering
+exports.getAllPackages = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      tourType,
+      destination,
+      minPrice,
+      maxPrice,
+      status = 'PUBLISHED', // Set default status to PUBLISHED
+      agencyId,
+    } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    // Build filter conditions
+    const where = {
+      status: status.toUpperCase() // Always include status in the query
+    };
+
+    if (search) {
+      where.OR = [
+        { title: { contains: search, mode: 'insensitive' } },
+        { subtitle: { contains: search, mode: 'insensitive' } },
+        { summary: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    if (tourType) {
+      where.tourType = tourType.toUpperCase();
+    }
+
+    if (destination) {
+      where.destinations = {
+        some: {
+          name: { contains: destination, mode: 'insensitive' },
+        },
+      };
+    }
+
+    if (minPrice || maxPrice) {
+      where.pricePerPerson = {};
+      if (minPrice) where.pricePerPerson.gte = parseFloat(minPrice);
+      if (maxPrice) where.pricePerPerson.lte = parseFloat(maxPrice);
+    }
+
+    if (agencyId) {
+      where.agencyId = agencyId;
+    }
+
+    console.log('Customer package query where conditions:', JSON.stringify(where));
+
+    // Get tour packages with related data
+    const tourPackages = await prisma.tourPackage.findMany({
+      where,
+      include: {
+        agency: {
+          select: {
+            id: true,
+            name: true,
+            logo: true,
+          },
+        },
+        destinations: {
+          select: {
+            id: true,
+            name: true,
+            image: true,
+          },
+        },
+        itinerary: {
+          select: {
+            id: true,
+            day: true,
+            title: true,
+            description: true,
+          },
+          orderBy: {
+            day: 'asc',
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+      skip,
+      take: parseInt(limit),
+    });
+
+    // Get total count for pagination
+    const total = await prisma.tourPackage.count({ where });
+
+    console.log(`Found ${tourPackages.length} packages matching criteria`);
+
+    // Process tour packages for response
+    const processedPackages = tourPackages.map((pkg) => {
+      // Parse string arrays back to arrays if they're stored as JSON strings
+      let galleryImages = pkg.galleryImages;
+      let includedItems = pkg.includedItems;
+      let excludedItems = pkg.excludedItems;
+      let highlights = pkg.highlights;
+
+      // Parse JSON strings if needed
+      try {
+        if (typeof galleryImages === 'string') galleryImages = JSON.parse(galleryImages);
+        if (typeof includedItems === 'string') includedItems = JSON.parse(includedItems);
+        if (typeof excludedItems === 'string') excludedItems = JSON.parse(excludedItems);
+        if (typeof highlights === 'string') highlights = JSON.parse(highlights);
+      } catch (e) {
+        console.warn('Error parsing JSON fields:', e);
+      }
+
+      return {
+        id: pkg.id,
+        title: pkg.title,
+        subtitle: pkg.subtitle,
+        summary: pkg.summary,
+        description: pkg.description,
+        pricePerPerson: pkg.pricePerPerson,
+        price: pkg.price,
+        discountPrice: pkg.discountPrice,
+        duration: pkg.duration,
+        destination: pkg.destination, // For backward compatibility
+        startDate: pkg.startDate,
+        endDate: pkg.endDate,
+        validFrom: pkg.validFrom,
+        validTill: pkg.validTill,
+        minCapacity: pkg.minimumAge, // Map to match TourPackage interface
+        minimumAge: pkg.minimumAge,
+        maxPeople: pkg.maximumPeople || pkg.maxGroupSize,
+        maxGroupSize: pkg.maxGroupSize,
+        tourType: pkg.tourType,
+        status: pkg.status,
+        inclusions: includedItems || pkg.inclusions,
+        exclusions: excludedItems || pkg.exclusions,
+        includedItems: includedItems,
+        excludedItems: excludedItems,
+        highlights: highlights,
+        coverImage: pkg.coverImage,
+        images: galleryImages || pkg.images,
+        galleryImages: galleryImages,
+        phoneNumber: pkg.phoneNumber,
+        email: pkg.email,
+        whatsapp: pkg.whatsapp,
+        cancellationPolicy: pkg.cancelationPolicy,
+        additionalInfo: pkg.additionalInfo,
+        difficultyLevel: pkg.difficultyLevel,
+        isFlexible: pkg.isFlexible,
+        createdAt: pkg.createdAt,
+        updatedAt: pkg.updatedAt,
+        agencyId: pkg.agencyId,
+        agency: pkg.agency,
+        itinerary: pkg.itinerary,
+        destinations: pkg.destinations,
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      data: processedPackages,
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        pages: Math.ceil(total / parseInt(limit)),
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching tour packages:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch tour packages',
+      error: error.message,
+    });
+  }
+};

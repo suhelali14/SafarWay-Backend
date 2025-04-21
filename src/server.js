@@ -22,6 +22,7 @@ const messageRoutes = require('./routes/message.routes');
 const analyticsRoutes = require('./routes/analytics.routes');
 const adminRoutes = require('./routes/admin.routes');
 const agencyRoutes = require('./routes/agency.routes');
+const agencyPublicRoutes = require('./routes/agencyPublic.routes');
 
 const app = express();
 
@@ -64,6 +65,7 @@ async function initializeApp() {
   app.use('/api/analytics', analyticsRoutes);
   app.use('/api/admin', adminRoutes);
   app.use('/api/agency', agencyRoutes);
+  app.use('/api/agency-public', agencyPublicRoutes);
   
   // Error handling
   app.use(errorHandler);

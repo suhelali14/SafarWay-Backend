@@ -101,6 +101,9 @@ model User {
   ticketAssignmentLogs TicketAssignmentLog[]
   sessions             Session[]
   wishlist             Wishlist[]
+  reviews              Review[]
+  mediaLikes           MediaLike[]
+  subscriptions        Subscription[]
 }
 
 model Session {
@@ -135,8 +138,12 @@ model Agency {
   settings              AgencySettings?
 
   // Relations
-  users        User[]
-  tourPackages TourPackage[]
+  users         User[]
+  tourPackages  TourPackage[]
+  bookings      Booking[]
+  reviews       Review[]
+  mediaItems    AgencyMedia[]
+  subscriptions Subscription[]
 }
 
 model Customer {
@@ -183,10 +190,9 @@ model TourPackage {
   cancelationPolicy String?   @db.Text
   additionalInfo    String?   @db.Text
   status            String    @default("ACTIVE") // ACTIVE, INACTIVE, CANCELLED
-  destination       String?   // Added for backward compatibility with existing API
+  destination       String? // Added for backward compatibility with existing API
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
-  
 
   // Relations
   agencyId     String
@@ -231,13 +237,16 @@ model Booking {
   updatedAt       DateTime      @updatedAt
 
   // Relations
+  agencyId      String
   userId        String
   user          User           @relation(fields: [userId], references: [id])
   customerId    String
   customer      Customer       @relation(fields: [customerId], references: [id])
   tourPackageId String
   tourPackage   TourPackage    @relation(fields: [tourPackageId], references: [id])
+  agency        Agency         @relation(fields: [agencyId], references: [id])
   refundRequest RefundRequest?
+  Review        Review?
 }
 
 model RefundRequest {
@@ -382,4 +391,67 @@ model Exclusion {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model Review {
+  id                String    @id @default(uuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id])
+  agencyId          String
+  agency            Agency    @relation(fields: [agencyId], references: [id])
+  bookingId         String?   @unique
+  booking           Booking?  @relation(fields: [bookingId], references: [id])
+  rating            Int
+  comment           String    @db.Text
+  isVerifiedBooking Boolean   @default(false)
+  responseText      String?   @db.Text
+  responseDate      DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([agencyId])
+  @@index([userId])
+}
+
+model AgencyMedia {
+  id          String      @id @default(uuid())
+  agencyId    String
+  agency      Agency      @relation(fields: [agencyId], references: [id])
+  type        String // IMAGE, VIDEO, ANNOUNCEMENT
+  url         String
+  caption     String?     @db.Text
+  likes       Int         @default(0)
+  publishedAt DateTime    @default(now())
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  mediaLikes  MediaLike[]
+
+  @@index([agencyId])
+}
+
+model MediaLike {
+  id        String      @id @default(uuid())
+  userId    String
+  user      User        @relation(fields: [userId], references: [id])
+  mediaId   String
+  media     AgencyMedia @relation(fields: [mediaId], references: [id])
+  likedAt   DateTime    @default(now())
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@unique([userId, mediaId])
+}
+
+model Subscription {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  agencyId     String
+  agency       Agency   @relation(fields: [agencyId], references: [id])
+  subscribedAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, agencyId])
 }

@@ -104,7 +104,7 @@ exports.getAllPackages = async (req, res, next) => {
     
     // Build filter conditions
     const where = {
-      status: 'ACTIVE'
+      status: 'PUBLISHED'
     };
     
     if (search) {
@@ -223,7 +223,7 @@ exports.getPackageById = async (req, res, next) => {
         },
         itinerary: {
           orderBy: {
-            dayNumber: 'asc'
+            day: 'asc'
           }
         },
         _count: {

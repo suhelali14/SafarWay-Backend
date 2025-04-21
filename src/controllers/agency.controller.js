@@ -10,7 +10,7 @@ const getDashboardSummary = async (req, res) => {
     const agencyId = req.user.agencyId;
     const today = new Date();
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-
+    console.log(req)
     const [
       totalPackages,
       totalBookings,
@@ -297,17 +297,17 @@ const createPackage = async (req, res) => {
       maxGroupSize, groupSize, packageType, tourType, destination, inclusions, exclusions, 
       itinerary, status, startDate, endDate, validFrom, validTill,
       phoneNumber, email, whatsapp, cancelationPolicy, additionalInfo, minimumAge,
-      maximumPeople, difficultyLevel, isFlexible, subtitle, summary
+      maximumPeople, difficultyLevel, isFlexible, subtitle, summary ,coverImage ,images
     } = req.body;
 
     // Process cover image
-    let coverImage = null;
+    
     if (req.files && req.files.coverImage && req.files.coverImage[0]) {
       coverImage = `/uploads/${req.files.coverImage[0].filename}`;
     }
 
     // Process gallery images
-    let galleryImages = [];
+    let galleryImages = images;
     if (req.files && req.files.images && req.files.images.length > 0) {
       galleryImages = req.files.images.map(file => `/uploads/${file.filename}`);
     }
@@ -580,12 +580,13 @@ const deletePackage = async (req, res) => {
 // Bookings
 const getBookings = async (req, res) => {
   try {
-    const bookings = await Booking.find({ agencyId: req.user.agencyId })
-      .populate('packageId')
-      .populate('userId', 'name email');
+
+    const bookings = await prisma.booking.findMany({ select: {agencyId: req.user.agencyId} })
+
     res.json(bookings);
   } catch (error) {
-    throw new ApiError(500, 'Error fetching bookings');
+    console.error('Error getting package:', error);
+    res.status(500).json({ message: 'Failed to Load package', error: error.message });
   }
 };
 

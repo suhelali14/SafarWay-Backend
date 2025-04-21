@@ -403,6 +403,126 @@ const rejectAgency = async (req, res) => {
   }
 };
 
+
+// Reports 
+const getReportAdmin = async (req, res) => {
+  try {
+    const { timeRange = 'month' } = req.query;
+
+    let startDate;
+    const endDate = new Date();
+
+    switch (timeRange) {
+      case 'year':
+        startDate = new Date(endDate.getFullYear(), 0, 1);
+        break;
+      case 'month':
+      default:
+        startDate = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+        break;
+    }
+
+    const [totalBookings, bookingsByStatus, bookingsByMonth, totalRevenue, revenueByMonth, totalUsers, userByRole, userGrowth, totalAgencies, activeAgencies, pendingAgencies, agenciesByLocation] = await Promise.all([
+      prisma.booking.count({
+        where: { createdAt: { gte: startDate, lte: endDate } }
+      }),
+      prisma.booking.groupBy({
+        by: ['status'],
+        _count: true,
+        where: { createdAt: { gte: startDate, lte: endDate } }
+      }),
+      prisma.$queryRaw`
+        SELECT
+          TO_CHAR("createdAt", 'YYYY-MM') AS month,
+          COUNT(*)::INTEGER AS count
+        FROM "Booking"
+        WHERE "createdAt" >= ${startDate} AND "createdAt" <= ${endDate}
+        GROUP BY month
+        ORDER BY month;
+      `,
+      prisma.booking.aggregate({
+        _sum: { totalPrice: true },
+        where: { createdAt: { gte: startDate, lte: endDate } }
+      }),
+      prisma.$queryRaw`
+        SELECT
+          TO_CHAR("createdAt", 'YYYY-MM') AS month,
+          SUM("totalPrice")::FLOAT AS total
+        FROM "Booking"
+        WHERE "createdAt" >= ${startDate} AND "createdAt" <= ${endDate}
+        GROUP BY month
+        ORDER BY month;
+      `,
+      prisma.user.count({
+        where: { createdAt: { gte: startDate, lte: endDate } }
+      }),
+      prisma.user.groupBy({
+        by: ['role'],
+        _count: true,
+        where: { createdAt: { gte: startDate, lte: endDate } }
+      }),
+      prisma.user.count({
+        where: {
+          createdAt: { gte: startDate, lte: endDate },
+          status: 'ACTIVE'
+        }
+      }),
+      prisma.agency.count(),
+      prisma.agency.count({ where: { status: 'ACTIVE' } }),
+      prisma.agency.count({ where: { status: 'PENDING' } }),
+      prisma.$queryRaw`
+        SELECT "address", COUNT(*)::INTEGER AS count
+        FROM "Agency"
+        GROUP BY "address";
+      `
+    ]);
+
+    const report = {
+      bookings: {
+        total: totalBookings,
+        byStatus: {
+          confirmed: bookingsByStatus.find(s => s.status === 'CONFIRMED')?._count || 0,
+          pending: bookingsByStatus.find(s => s.status === 'PENDING')?._count || 0,
+          cancelled: bookingsByStatus.find(s => s.status === 'CANCELLED')?._count || 0,
+        },
+        byMonth: bookingsByMonth.map(item => ({
+          month: item.month,
+          count: item.count
+        })),
+      },
+      revenue: {
+        total: totalRevenue._sum.totalPrice || 0,
+        currency: 'USD',
+        byMonth: revenueByMonth.map(item => ({
+          month: item.month,
+          total: item.total
+        })),
+      },
+      users: {
+        total: totalUsers,
+        byRole: {
+          customer: userByRole.find(r => r.role === 'CUSTOMER')?._count || 0,
+          agency: userByRole.filter(r => r.role.includes('AGENCY')).reduce((sum, r) => sum + r._count, 0),
+        },
+        growth: userGrowth,
+      },
+      agencies: {
+        total: totalAgencies,
+        active: activeAgencies,
+        pending: pendingAgencies,
+        byLocation: agenciesByLocation.map(item => ({
+          location: item.address,
+          count: item.count
+        })),
+      }
+    };
+
+    res.json(report);
+  } catch (error) {
+    console.error('Error fetching report data:', error);
+    res.status(500).json({ message: 'Error fetching report data', error: error.message });
+  }
+};
 // Bookings Management
 const getAllBookings = async (req, res) => {
   try {
@@ -724,5 +844,6 @@ module.exports = {
   getSupportTickets,
   getSupportTicketById,
   updateSupportTicket,
-  addSupportTicketResponse
+  addSupportTicketResponse,
+  getReportAdmin
 }; 

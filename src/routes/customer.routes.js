@@ -16,6 +16,7 @@ const {
   getDashboardStats
 } = require('../controllers/customer.controller');
 const { authenticate, authorizeRoles } = require('../middleware/auth.middleware');
+const { getAllPackages, getPackageById } = require('../controllers/package.controller');
 
 // Base route for checking if routes are working
 router.get('/', (req, res) => {
@@ -28,6 +29,10 @@ router.get('/details/:id', authenticate, authorizeRoles(['SAFARWAY_ADMIN']), get
 router.post('/', authenticate, authorizeRoles(['SAFARWAY_ADMIN']), createCustomer);
 router.put('/:id', authenticate, authorizeRoles(['SAFARWAY_ADMIN']), updateCustomer);
 router.delete('/:id', authenticate, authorizeRoles(['SAFARWAY_ADMIN']), deleteCustomer);
+
+// Customer package routes
+router.get('/packages', getAllPackages);
+router.get('/packages/:id', getPackageById);
 
 // Customer dashboard routes - protected by customer role
 router.get('/profile', authenticate, authorizeRoles(['CUSTOMER']), getProfile);

@@ -45,6 +45,11 @@ router.patch('/bookings/:id/status', validateUpdateBookingStatus, adminControlle
 // Revenue Insights
 router.get('/revenue/insights', adminController.getRevenueInsights);
 
+
+// Reports
+router.get('/reports/',adminController.getReportAdmin);
+
+// 
 // Refund Requests
 router.get('/refunds/requests', adminController.getRefundRequests);
 router.get('/refunds/requests/:id', adminController.getRefundRequestById);
