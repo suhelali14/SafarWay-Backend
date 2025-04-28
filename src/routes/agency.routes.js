@@ -3,6 +3,7 @@ const router = express.Router();
 const multer = require('multer');
 const { authenticate, authorizeRoles } = require('../middleware/auth.middleware');
 const { validateAgencyProfile, validateAgencySettings, validateDocument } = require('../validators/agency.validator');
+const { clearPackageCacheMiddleware } = require('../middleware/package-cache.middleware');
 const {
   getDashboardSummary,
   getPackages,
@@ -26,7 +27,9 @@ const {
   createUser,
   updateUser,
   deleteUser,
-  exportPackage
+  exportPackage,
+  getRedisCacheStatus,
+  clearPackageCache
 } = require('../controllers/agency.controller');
 
 // Configure multer for file uploads
@@ -41,7 +44,7 @@ router.use(authenticate);
 router.use(authorizeRoles(['AGENCY_ADMIN', 'AGENCY_USER']));
 
 // Dashboard
-router.get('/dashboard', getDashboardSummary);
+router.get('/dashboard/summary', getDashboardSummary);
 
 // Packages
 router.get('/packages', getPackages);
@@ -50,12 +53,12 @@ router.get('/packages/:id/export', exportPackage);
 router.post('/packages', upload.fields([
   { name: 'coverImage', maxCount: 1 },
   { name: 'images', maxCount: 10 }
-]), authorizeRoles(['AGENCY_ADMIN', 'AGENCY_USER']), createPackage);
+]), authorizeRoles(['AGENCY_ADMIN', 'AGENCY_USER']), clearPackageCacheMiddleware, createPackage);
 router.put('/packages/:id', upload.fields([
   { name: 'coverImage', maxCount: 1 },
   { name: 'images', maxCount: 10 }
-]), authorizeRoles(['AGENCY_ADMIN', 'AGENCY_USER']), updatePackage);
-router.delete('/packages/:id', authorizeRoles(['AGENCY_ADMIN', 'AGENCY_USER']), deletePackage);
+]), authorizeRoles(['AGENCY_ADMIN', 'AGENCY_USER']), clearPackageCacheMiddleware, updatePackage);
+router.delete('/packages/:id', authorizeRoles(['AGENCY_ADMIN', 'AGENCY_USER']), clearPackageCacheMiddleware, deletePackage);
 
 // Bookings
 router.get('/bookings', getBookings);
@@ -87,5 +90,12 @@ router.get('/users/:id', authorizeRoles(['AGENCY_ADMIN']), getUserById);
 router.post('/users', authorizeRoles(['AGENCY_ADMIN']), createUser);
 router.put('/users/:id', authorizeRoles(['AGENCY_ADMIN']), updateUser);
 router.delete('/users/:id', authorizeRoles(['AGENCY_ADMIN']), deleteUser);
+
+// Redis cache status
+router.get('/redis-cache-status', getRedisCacheStatus);
+
+// Package cache management
+router.post('/clear-package-cache', clearPackageCache);
+router.post('/packages/:packageId/clear-cache', clearPackageCache);
 
 module.exports = router; 

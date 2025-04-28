@@ -97,10 +97,14 @@ exports.getAllPackages = async (req, res, next) => {
       maxPrice, 
       duration,
       sortBy = 'createdAt',
-      sortOrder = 'desc'
+      sortOrder = 'desc',
+      fields
     } = req.query;
     
-    const skip = (page - 1) * limit;
+    // Parse pagination parameters
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
     
     // Build filter conditions
     const where = {
@@ -138,30 +142,33 @@ exports.getAllPackages = async (req, res, next) => {
     const orderBy = {};
     orderBy[sortBy] = sortOrder;
     
-    // Get packages with agency data
-    const packages = await prisma.tourPackage.findMany({
-      where,
-      include: {
-        agency: {
-          select: {
-            id: true,
-            name: true,
-            logo: true
-          }
-        },
-        _count: {
-          select: {
-            bookings: true
-          }
+    // Build include object for related entities
+    const include = {
+      agency: {
+        select: {
+          id: true,
+          name: true,
+          logo: true
         }
       },
-      orderBy,
-      skip,
-      take: parseInt(limit)
-    });
+      _count: {
+        select: {
+          bookings: true
+        }
+      }
+    };
     
-    // Get total count for pagination
-    const total = await prisma.tourPackage.count({ where });
+    // Parallel promises for better performance
+    const [packages, total] = await Promise.all([
+      prisma.tourPackage.findMany({
+        where,
+        include,
+        orderBy,
+        skip,
+        take: limitNum
+      }),
+      prisma.tourPackage.count({ where })
+    ]);
     
     // If user is logged in, check if packages are in wishlist
     let wishlistItems = [];
@@ -177,26 +184,44 @@ exports.getAllPackages = async (req, res, next) => {
     }
     
     // Add wishlist info to packages
-    const packagesWithWishlist = packages.map(pkg => ({
-      ...pkg,
-      isInWishlist: wishlistItems.some(item => item.tourPackageId === pkg.id),
-      bookingCount: pkg._count.bookings
-    }));
-    
-    // Remove _count from response
-    const formattedPackages = packagesWithWishlist.map(pkg => {
-      const { _count, ...rest } = pkg;
-      return rest;
+    const packagesWithWishlist = packages.map(pkg => {
+      // Create a filtered package object with only the fields we need
+      const filteredPackage = {
+        id: pkg.id,
+        title: pkg.title,
+        summary: pkg.summary,
+        price: pkg.price,
+        pricePerPerson: pkg.pricePerPerson,
+        discountPrice: pkg.discountPrice,
+        destination: pkg.destination,
+        duration: pkg.duration,
+        tourType: pkg.tourType,
+        coverImage: pkg.coverImage,
+        startDate: pkg.startDate,
+        endDate: pkg.endDate,
+        agencyId: pkg.agencyId,
+        images: pkg.images,
+        status: pkg.status,
+        createdAt: pkg.createdAt,
+        updatedAt: pkg.updatedAt,
+        agency: pkg.agency,
+        isInWishlist: wishlistItems.some(item => item.tourPackageId === pkg.id),
+        bookingCount: pkg._count?.bookings || 0
+      };
+      return filteredPackage;
     });
+    
+    // Set cache control header for browsers
+    res.set('Cache-Control', 'public, max-age=600'); // 10 minutes
     
     res.status(200).json({
       success: true,
-      data: formattedPackages,
+      data: packagesWithWishlist,
       pagination: {
         total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        pages: Math.ceil(total / parseInt(limit))
+        page: pageNum,
+        limit: limitNum,
+        pages: Math.ceil(total / limitNum)
       }
     });
   } catch (error) {
@@ -209,33 +234,39 @@ exports.getPackageById = async (req, res, next) => {
   try {
     const { id } = req.params;
     
-    const tourPackage = await prisma.tourPackage.findUnique({
-      where: { id },
-      include: {
-        agency: {
-          select: {
-            id: true,
-            name: true,
-            logo: true,
-            contactEmail: true,
-            contactPhone: true
-          }
-        },
-        itinerary: {
-          orderBy: {
-            day: 'asc'
-          }
-        },
-        _count: {
-          select: {
-            bookings: true
-          }
+    // Build include object for related entities
+    const include = {
+      agency: {
+        select: {
+          id: true,
+          name: true,
+          logo: true,
+          contactEmail: true,
+          contactPhone: true
+        }
+      },
+      itinerary: {
+        orderBy: {
+          day: 'asc'
+        }
+      },
+      _count: {
+        select: {
+          bookings: true
         }
       }
+    };
+    
+    const tourPackage = await prisma.tourPackage.findUnique({
+      where: { id },
+      include
     });
     
     if (!tourPackage) {
-      throw new ApiError(404, 'Tour package not found');
+      return res.status(404).json({
+        success: false,
+        message: 'Tour package not found'
+      });
     }
     
     // Check if package is in user's wishlist
@@ -250,16 +281,22 @@ exports.getPackageById = async (req, res, next) => {
       isInWishlist = !!wishlistItem;
     }
     
-    // Remove _count from response
-    const { _count, ...packageData } = tourPackage;
+    // Format response
+    const bookingCount = tourPackage._count?.bookings || 0;
+    delete tourPackage._count; // Remove _count from response
+
+    const response = {
+      ...tourPackage,
+      isInWishlist,
+      bookingCount
+    };
+    
+    // Set cache control header for browsers
+    res.set('Cache-Control', 'public, max-age=3600'); // 1 hour
     
     res.status(200).json({
       success: true,
-      data: {
-        ...packageData,
-        isInWishlist,
-        bookingCount: _count.bookings
-      }
+      data: response
     });
   } catch (error) {
     next(error);

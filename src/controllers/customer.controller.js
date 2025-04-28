@@ -992,6 +992,9 @@ exports.getDashboardStats = async (req, res) => {
 
 // Get all tour packages with pagination and filtering
 exports.getAllPackages = async (req, res) => {
+  const startTime = Date.now();
+  let queryTime, processTime;
+  
   try {
     const {
       page = 1,
@@ -1001,14 +1004,22 @@ exports.getAllPackages = async (req, res) => {
       destination,
       minPrice,
       maxPrice,
-      status = 'PUBLISHED', // Set default status to PUBLISHED
+      status = 'PUBLISHED', // Default status
       agencyId,
     } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
+    const limitNum = parseInt(limit);
+    
+    // Timing tracking
+    const timeMarkers = {
+      start: Date.now(),
+      afterQuery: 0,
+      afterProcessing: 0
+    };
 
     // Build filter conditions
     const where = {
-      status: status.toUpperCase() // Always include status in the query
+      status: status.toUpperCase()
     };
 
     if (search) {
@@ -1016,7 +1027,6 @@ exports.getAllPackages = async (req, res) => {
         { title: { contains: search, mode: 'insensitive' } },
         { subtitle: { contains: search, mode: 'insensitive' } },
         { summary: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
       ];
     }
 
@@ -1024,12 +1034,23 @@ exports.getAllPackages = async (req, res) => {
       where.tourType = tourType.toUpperCase();
     }
 
+    // Optimize destination search
     if (destination) {
-      where.destinations = {
-        some: {
-          name: { contains: destination, mode: 'insensitive' },
-        },
-      };
+      // First try direct match with destination field for better performance
+      if (!where.OR) where.OR = [];
+      
+      where.OR.push(
+        // Try the destination field (faster)
+        { destination: { contains: destination, mode: 'insensitive' } },
+        // Fall back to destinations relation if needed
+        { 
+          destinations: {
+            some: {
+              name: { contains: destination, mode: 'insensitive' },
+            },
+          }
+        }
+      );
     }
 
     if (minPrice || maxPrice) {
@@ -1042,66 +1063,103 @@ exports.getAllPackages = async (req, res) => {
       where.agencyId = agencyId;
     }
 
-    console.log('Customer package query where conditions:', JSON.stringify(where));
+    // Select only the fields we need
+    const select = {
+      id: true,
+      title: true,
+      subtitle: true,
+      summary: true,
+      description: true,
+      pricePerPerson: true,
+      price: true,
+      discountPrice: true,
+      duration: true,
+      destination: true,
+      startDate: true,
+      endDate: true,
+      validFrom: true,
+      validTill: true,
+      minimumAge: true,
+      maximumPeople: true,
+      maxGroupSize: true,
+      tourType: true,
+      status: true,
+      coverImage: true,
+      galleryImages: true,
+      includedItems: true,
+      excludedItems: true,
+      highlights: true,
+      phoneNumber: true,
+      email: true,
+      whatsapp: true,
+      cancelationPolicy: true,
+      additionalInfo: true,
+      difficultyLevel: true,
+      isFlexible: true,
+      createdAt: true,
+      updatedAt: true,
+      agencyId: true,
+    };
 
-    // Get tour packages with related data
-    const tourPackages = await prisma.tourPackage.findMany({
-      where,
-      include: {
-        agency: {
-          select: {
-            id: true,
-            name: true,
-            logo: true,
+    // Run queries in parallel using Promise.all
+    const [tourPackages, total] = await Promise.all([
+      prisma.tourPackage.findMany({
+        where,
+        select: {
+          ...select,
+          agency: {
+            select: {
+              id: true,
+              name: true,
+              logo: true,
+            },
+          },
+          destinations: {
+            select: {
+              id: true,
+              name: true,
+              image: true,
+            },
+          },
+          itinerary: {
+            select: {
+              id: true,
+              day: true,
+              title: true,
+              description: true,
+            },
+            orderBy: {
+              day: 'asc',
+            },
           },
         },
-        destinations: {
-          select: {
-            id: true,
-            name: true,
-            image: true,
-          },
+        orderBy: {
+          createdAt: 'desc',
         },
-        itinerary: {
-          select: {
-            id: true,
-            day: true,
-            title: true,
-            description: true,
-          },
-          orderBy: {
-            day: 'asc',
-          },
-        },
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-      skip,
-      take: parseInt(limit),
-    });
-
-    // Get total count for pagination
-    const total = await prisma.tourPackage.count({ where });
-
-    console.log(`Found ${tourPackages.length} packages matching criteria`);
+        skip,
+        take: limitNum,
+      }),
+      prisma.tourPackage.count({ where })
+    ]);
+    
+    timeMarkers.afterQuery = Date.now();
+    queryTime = timeMarkers.afterQuery - timeMarkers.start;
 
     // Process tour packages for response
     const processedPackages = tourPackages.map((pkg) => {
-      // Parse string arrays back to arrays if they're stored as JSON strings
       let galleryImages = pkg.galleryImages;
       let includedItems = pkg.includedItems;
       let excludedItems = pkg.excludedItems;
       let highlights = pkg.highlights;
 
-      // Parse JSON strings if needed
+      // Parse JSON strings if needed (only if they're strings)
       try {
         if (typeof galleryImages === 'string') galleryImages = JSON.parse(galleryImages);
         if (typeof includedItems === 'string') includedItems = JSON.parse(includedItems);
         if (typeof excludedItems === 'string') excludedItems = JSON.parse(excludedItems);
         if (typeof highlights === 'string') highlights = JSON.parse(highlights);
       } catch (e) {
-        console.warn('Error parsing JSON fields:', e);
+        // Silent catch - just use the original value
       }
 
       return {
@@ -1114,12 +1172,12 @@ exports.getAllPackages = async (req, res) => {
         price: pkg.price,
         discountPrice: pkg.discountPrice,
         duration: pkg.duration,
-        destination: pkg.destination, // For backward compatibility
+        destination: pkg.destination, 
         startDate: pkg.startDate,
         endDate: pkg.endDate,
         validFrom: pkg.validFrom,
         validTill: pkg.validTill,
-        minCapacity: pkg.minimumAge, // Map to match TourPackage interface
+        minCapacity: pkg.minimumAge,
         minimumAge: pkg.minimumAge,
         maxPeople: pkg.maximumPeople || pkg.maxGroupSize,
         maxGroupSize: pkg.maxGroupSize,
@@ -1148,6 +1206,15 @@ exports.getAllPackages = async (req, res) => {
         destinations: pkg.destinations,
       };
     });
+    
+    timeMarkers.afterProcessing = Date.now();
+    processTime = timeMarkers.afterProcessing - timeMarkers.afterQuery;
+    
+    // Add Cache-Control headers
+    res.set('Cache-Control', 'public, max-age=600'); // 10 minutes cache
+    
+    // Log performance data
+    console.log(`[Performance] GET packages - Query: ${queryTime}ms, Processing: ${processTime}ms, Total: ${Date.now() - startTime}ms`);
 
     res.status(200).json({
       success: true,
@@ -1158,13 +1225,41 @@ exports.getAllPackages = async (req, res) => {
         limit: parseInt(limit),
         pages: Math.ceil(total / parseInt(limit)),
       },
+      timing: {
+        query: queryTime,
+        processing: processTime,
+        total: Date.now() - startTime
+      }
     });
   } catch (error) {
     console.error('Error fetching tour packages:', error);
+    
+    // Log performance even in error case
+    const totalTime = Date.now() - startTime;
+    console.error(`[Performance] GET packages ERROR - Total: ${totalTime}ms, Query: ${queryTime || 'N/A'}ms`);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to fetch tour packages',
       error: error.message,
     });
+  }
+};
+
+exports.getAgencyById = async (req, res) => {
+  try {
+    const agency = await prisma.agency.findUnique({
+      where: { id: req.params.id },
+      include: {
+        users: true,
+        tourPackages: true
+      }
+    });
+    if (!agency) {
+      return res.status(404).json({ message: 'Agency not found' });
+    }
+    res.json(agency);
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching agency', error: error.message });
   }
 };

@@ -1,8 +1,37 @@
 const { ApiError } = require('../utils/ApiError');
 const { ApiResponse } = require('../utils/ApiResponse');
 const { PrismaClient } = require('@prisma/client');
+const { cacheHelpers, checkRedisStatus, redis, redisEnabled } = require('../middleware/cache.middleware');
 
 const prisma = new PrismaClient();
+
+// Helper function to safely get data from cache
+const getFromCache = async (key) => {
+  try {
+    if (!redisEnabled || !redis) return null;
+    
+    const prefixedKey = `safarway:${key}`;
+    const data = await redis.get(prefixedKey);
+    return data;
+  } catch (error) {
+    console.error(`Error getting from cache for key ${key}:`, error);
+    return null;
+  }
+};
+
+// Helper function to safely store data in cache
+const storeInCache = async (key, data, ttl = 3600) => {
+  try {
+    if (!redisEnabled || !redis) return false;
+    
+    const prefixedKey = `safarway:${key}`;
+    await redis.set(prefixedKey, data, 'EX', ttl);
+    return true;
+  } catch (error) {
+    console.error(`Error storing in cache for key ${key}:`, error);
+    return false;
+  }
+};
 
 // Dashboard
 const getDashboardSummary = async (req, res) => {
@@ -12,13 +41,18 @@ const getDashboardSummary = async (req, res) => {
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     console.log(req)
     const [
+      totalActivePackages,
       totalPackages,
       totalBookings,
       monthlyBookings,
-      totalRevenue,
-      monthlyRevenue,
+      totalCustomers,
+      bookingsForRevenue,
+      monthlyBookingsForRevenue,
       recentBookings
     ] = await Promise.all([
+      prisma.tourPackage.count({
+        where: { agencyId, status: 'PUBLISHED' }
+      }),
       prisma.tourPackage.count({
         where: { agencyId }
       }),
@@ -31,16 +65,19 @@ const getDashboardSummary = async (req, res) => {
           createdAt: { gte: startOfMonth }
         }
       }),
-      prisma.payment.aggregate({
-        where: { agencyId },
-        _sum: { amount: true }
+      prisma.user.count({
+        where: { invitedByUserId: agencyId, role: 'CUSTOMER' }
       }),
-      prisma.payment.aggregate({
+      prisma.booking.findMany({
+        where: { agencyId },
+        select: { totalPrice: true }
+      }),
+      prisma.booking.findMany({
         where: {
           agencyId,
           createdAt: { gte: startOfMonth }
         },
-        _sum: { amount: true }
+        select: { totalPrice: true }
       }),
       prisma.booking.findMany({
         where: { agencyId },
@@ -57,7 +94,7 @@ const getDashboardSummary = async (req, res) => {
           tourPackage: {
             select: {
               id: true,
-              name: true,
+              title: true,
               destination: true
             }
           }
@@ -65,6 +102,18 @@ const getDashboardSummary = async (req, res) => {
       })
     ]);
 
+    // Calculate total revenue from bookings
+    const totalRevenue = bookingsForRevenue.reduce(
+      (sum, booking) => sum + (booking.totalPrice || 0), 
+      0
+    );
+    
+    // Calculate monthly revenue from bookings
+    const monthlyRevenue = monthlyBookingsForRevenue.reduce(
+      (sum, booking) => sum + (booking.totalPrice || 0), 
+      0
+    );
+    
     // Generate chart data for the last 6 months
     const bookingsLast6Months = await prisma.booking.findMany({
       where: {
@@ -82,11 +131,13 @@ const getDashboardSummary = async (req, res) => {
     const chartData = processBookingsForChart(bookingsLast6Months);
 
     res.status(200).json({
+      totalActivePackages,
       totalPackages,
       totalBookings,
       monthlyBookings,
-      revenue: totalRevenue._sum?.amount || 0,
-      monthlyRevenue: monthlyRevenue._sum?.amount || 0,
+      totalCustomers,
+      revenue: totalRevenue,
+      monthlyRevenue: monthlyRevenue,
       recentBookings: recentBookings.map(booking => ({
         id: booking.id,
         customer: booking.user.name,
@@ -147,78 +198,133 @@ const getPackages = async (req, res) => {
     
     const agencyId = req.params.agencyId || req.user.agencyId;
     
-    // Build filter object
-    const filter = { agencyId };
+    // Generate a cache key based on query parameters
+    const cacheKey = `agency:${agencyId}:packages:${pageNum}:${limitNum}:${status || ''}:${package_type || ''}:${destination || ''}:${search || ''}`;
     
-    if (status) {
-      filter.status = status;
+    // Start performance tracking
+    const startTime = Date.now();
+    let queryTime = 0;
+    
+    // Try to get data from cache first
+    let packages = null;
+    let total = 0;
+    let cacheHit = false;
+    
+    try {
+      // Use safeRedisOperation in case Redis is down
+      const cachedData = await getFromCache(cacheKey);
+      if (cachedData) {
+        cacheHit = true;
+        const parsedData = JSON.parse(cachedData);
+        packages = parsedData.packages;
+        total = parsedData.total;
+        console.log(`Cache HIT for ${cacheKey}`);
+      }
+    } catch (cacheError) {
+      // Log cache error but continue with database query
+      console.error(`Cache error for ${cacheKey}:`, cacheError);
     }
     
-    if (package_type) {
-      filter.tourType = package_type;
-    }
-    
-    if (destination) {
-      filter.destination = {
-        contains: destination,
-        mode: 'insensitive'
-      };
-    }
-    
-    if (search) {
-      filter.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-        { destination: { contains: search, mode: 'insensitive' } }
-      ];
-    }
-    
-    // Fetch packages with pagination
-    const [packages, total] = await Promise.all([
-      prisma.tourPackage.findMany({
-        where: filter,
-        orderBy: {
-          createdAt: 'desc'
-        },
-        skip: (pageNum - 1) * limitNum,
-        take: limitNum,
-        include: {
-          agency: {
-            select: {
-              name: true,
-              logo: true
-            }
+    // If cache miss, fetch from database
+    if (!cacheHit) {
+      console.log(`Cache MISS for ${cacheKey}`);
+      // Build filter object
+      const filter = { agencyId };
+      
+      if (status) {
+        filter.status = status;
+      }
+      
+      if (package_type) {
+        filter.tourType = package_type;
+      }
+      
+      if (destination) {
+        filter.destination = {
+          contains: destination,
+          mode: 'insensitive'
+        };
+      }
+      
+      if (search) {
+        filter.OR = [
+          { title: { contains: search, mode: 'insensitive' } },
+          { description: { contains: search, mode: 'insensitive' } },
+          { destination: { contains: search, mode: 'insensitive' } }
+        ];
+      }
+      
+      const dbStartTime = Date.now();
+      
+      // Fetch packages with pagination
+      [packages, total] = await Promise.all([
+        prisma.tourPackage.findMany({
+          where: filter,
+          orderBy: {
+            createdAt: 'desc'
           },
-          destinations: {
-            select: {
-              id: true,
-              name: true
+          skip: (pageNum - 1) * limitNum,
+          take: limitNum,
+          include: {
+            agency: {
+              select: {
+                name: true,
+                logo: true
+              }
+            },
+            destinations: {
+              select: {
+                id: true,
+                name: true
+              }
             }
           }
-        }
-      }),
-      prisma.tourPackage.count({ where: filter })
-    ]);
-
-    // Add destination field for backward compatibility
-    const packagesWithDestination = packages.map(pkg => ({
-      ...pkg,
-      destination: pkg.destinations && pkg.destinations.length > 0 
-        ? pkg.destinations[0].name 
-        : null
-    }));
-
-    return res.status(200).json({
-      status: 'success',
-      message: 'Packages retrieved successfully',
-      data: packagesWithDestination,
+        }),
+        prisma.tourPackage.count({ where: filter })
+      ]);
+      
+      queryTime = Date.now() - dbStartTime;
+      
+      // Cache the results
+      try {
+        await storeInCache(
+          cacheKey,
+          JSON.stringify({ packages, total }),
+          // Cache for 10 minutes (600 seconds)
+          600
+        );
+      } catch (cachingError) {
+        // Log caching error but continue with response
+        console.error(`Error caching packages for ${cacheKey}:`, cachingError);
+      }
+    }
+    
+    // Set cache response headers
+    res.set('X-Cache', cacheHit ? 'HIT' : 'MISS');
+    res.set('X-Cache-Key', cacheKey);
+    if (queryTime > 0) {
+      res.set('X-Query-Time', `${queryTime}ms`);
+    }
+    
+    // Format the response with performance data
+    const response = {
+      status: "success",
+      message: "Packages retrieved successfully",
+      data: packages,
       meta: {
         total,
         pages: Math.ceil(total / limitNum),
         page: pageNum,
         limit: limitNum
+      },
+      performance: {
+        total: Date.now() - startTime,
+        queryTime,
+        cacheHit
       }
-    });
+    };
+    
+    return res.status(200).json(response);
   } catch (error) {
     console.error('Error fetching packages:', error);
     return res.status(500).json({
@@ -232,53 +338,118 @@ const getPackages = async (req, res) => {
 const getPackageById = async (req, res) => {
   try {
     const { id } = req.params;
-    const agencyId = req.params.agencyId || req.user.agencyId;
+    const agencyId = req.user.agencyId;
     
-    const tourPackage = await prisma.tourPackage.findFirst({
-      where: {
-        id,
-        agencyId
-      },
-      include: {
-        agency: {
-          select: {
-            id: true,
-            name: true,
-            logo: true,
-            contactEmail: true,
-            contactPhone: true
-          }
+    // Generate a cache key
+    const cacheKey = `agency:${agencyId}:package:${id}`;
+    
+    // Start performance tracking
+    const startTime = Date.now();
+    let queryTime = 0;
+    let cacheHit = false;
+    
+    // Try to get data from cache first
+    let packageData = null;
+    
+    try {
+      const cachedData = await getFromCache(cacheKey);
+      if (cachedData) {
+        cacheHit = true;
+        packageData = JSON.parse(cachedData);
+        console.log(`Cache HIT for ${cacheKey}`);
+      }
+    } catch (cacheError) {
+      // Log cache error but continue with database query
+      console.error(`Cache error for ${cacheKey}:`, cacheError);
+    }
+    
+    // If cache miss, fetch from database
+    if (!packageData) {
+      console.log(`Cache MISS for ${cacheKey}`);
+      
+      const dbStartTime = Date.now();
+      
+      // Check if package exists and belongs to the agency
+      packageData = await prisma.tourPackage.findFirst({
+        where: {
+          id,
+          agencyId
         },
-        destinations: {
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            image: true
+        include: {
+          agency: {
+            select: {
+              name: true,
+              logo: true,
+              contactEmail: true,
+              contactPhone: true
+            }
+          },
+          destinations: {
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              image: true
+            }
+          },
+          itinerary: {
+            orderBy: {
+              day: 'asc'
+            }
           }
         }
+      });
+      
+      queryTime = Date.now() - dbStartTime;
+      
+      // If package found, cache it
+      if (packageData) {
+        try {
+          await storeInCache(
+            cacheKey,
+            JSON.stringify(packageData),
+            // Cache for 60 minutes (3600 seconds)
+            3600
+          );
+        } catch (cachingError) {
+          // Log caching error but continue with response
+          console.error(`Error caching package for ${cacheKey}:`, cachingError);
+        }
       }
-    });
-
-    if (!tourPackage) {
+    }
+    
+    if (!packageData) {
       return res.status(404).json({
         status: 'error',
-        message: 'Package not found'
+        message: 'Package not found or you do not have permission to view this package'
       });
     }
-
-    // Extract the first destination name for backward compatibility
+    
+    // Format response data with JSON strings parsed if needed
     const responseData = {
-      ...tourPackage,
-      destination: tourPackage.destinations && tourPackage.destinations.length > 0 
-        ? tourPackage.destinations[0].name 
-        : null
+      ...packageData,
+      includedItems: parseJsonArrayIfString(packageData.includedItems),
+      excludedItems: parseJsonArrayIfString(packageData.excludedItems),
+      highlights: parseJsonArrayIfString(packageData.highlights),
+      itinerary: packageData.itinerary || []
     };
-
+    
+    // Set cache response headers
+    res.set('X-Cache', cacheHit ? 'HIT' : 'MISS');
+    res.set('X-Cache-Key', cacheKey);
+    if (queryTime > 0) {
+      res.set('X-Query-Time', `${queryTime}ms`);
+    }
+    
     return res.status(200).json({
-      status: 'success',
-      message: 'Package retrieved successfully',
-      data: responseData
+      status: "success",
+      message: "Package retrieved successfully",
+      data: responseData,
+      performance: {
+        total: Date.now() - startTime,
+        queryTime,
+        cacheHit
+      }
     });
   } catch (error) {
     console.error('Error fetching package:', error);
@@ -287,6 +458,18 @@ const getPackageById = async (req, res) => {
       message: 'Error fetching package',
       error: error.message
     });
+  }
+};
+
+// Helper function to parse JSON string to array if needed
+const parseJsonArrayIfString = (data) => {
+  if (!data) return [];
+  if (Array.isArray(data)) return data;
+  
+  try {
+    return JSON.parse(data);
+  } catch (error) {
+    return [];
   }
 };
 
@@ -400,6 +583,11 @@ const createPackage = async (req, res) => {
       }
     });
 
+    // Invalidate cache for packages
+    await cacheHelpers.clearPackageCache();
+    // Also clear agency cache since package counts might change
+    await cacheHelpers.clearAgencyCache(req.user.agencyId);
+    
     res.status(201).json({
       message: 'Package created successfully',
       package: newPackage
@@ -519,6 +707,11 @@ const updatePackage = async (req, res) => {
       }
     });
 
+    // Invalidate cache for the updated package
+    await cacheHelpers.clearPackageCache(id);
+    // Also clear agency cache since package details might affect agency data
+    await cacheHelpers.clearAgencyCache(req.user.agencyId);
+
     res.status(200).json({
       message: 'Package updated successfully',
       package: updatedPackage
@@ -567,6 +760,11 @@ const deletePackage = async (req, res) => {
     await prisma.tourPackage.delete({
       where: { id }
     });
+
+    // Invalidate cache for the deleted package
+    await cacheHelpers.clearPackageCache(id);
+    // Also clear agency cache since package counts will change
+    await cacheHelpers.clearAgencyCache(req.user.agencyId);
 
     res.status(200).json({
       message: 'Package deleted successfully'
@@ -1195,14 +1393,68 @@ const exportPackage = async (req, res) => {
   }
 };
 
+// Redis Status and Cache Management
+const getRedisCacheStatus = async (req, res) => {
+  try {
+    const redisStatus = await checkRedisStatus();
+    
+    res.status(200).json({
+      success: true,
+      data: redisStatus,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error checking Redis status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error checking Redis cache status',
+      error: error.message
+    });
+  }
+};
+
+// Function to manually clear package cache
+const clearPackageCache = async (req, res) => {
+  try {
+    const { packageId } = req.params;
+    const agencyId = req.user.agencyId;
+    
+    // If packageId is provided, clear only that package's cache
+    if (packageId) {
+      await cacheHelpers.clearPackageCache(packageId);
+      console.log(`Cache cleared for package: ${packageId}`);
+    } else {
+      // Otherwise clear all package cache for this agency
+      await cacheHelpers.clearPackageCache();
+      await cacheHelpers.clearAgencyCache(agencyId);
+      console.log(`Cache cleared for all packages from agency: ${agencyId}`);
+    }
+    
+    res.status(200).json({
+      success: true,
+      message: packageId 
+        ? `Cache cleared for package ${packageId}` 
+        : 'Cache cleared for all packages',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error clearing package cache:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error clearing package cache',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   getDashboardSummary,
+  processBookingsForChart,
   getPackages,
   getPackageById,
   createPackage,
   updatePackage,
   deletePackage,
-  exportPackage,
   getBookings,
   getBookingById,
   updateBookingStatus,
@@ -1218,5 +1470,8 @@ module.exports = {
   getUserById,
   createUser,
   updateUser,
-  deleteUser
+  deleteUser,
+  exportPackage,
+  getRedisCacheStatus,
+  clearPackageCache
 }; 

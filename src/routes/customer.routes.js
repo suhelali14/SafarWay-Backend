@@ -13,7 +13,8 @@ const {
   getRecommendedPackages,
   getWishlist,
   getValidOffers,
-  getDashboardStats
+  getDashboardStats,
+  getAgencyById
 } = require('../controllers/customer.controller');
 const { authenticate, authorizeRoles } = require('../middleware/auth.middleware');
 const { getAllPackages, getPackageById } = require('../controllers/package.controller');
@@ -34,6 +35,8 @@ router.delete('/:id', authenticate, authorizeRoles(['SAFARWAY_ADMIN']), deleteCu
 router.get('/packages', getAllPackages);
 router.get('/packages/:id', getPackageById);
 
+// Customer agency routes
+router.get('/agency-public/:id/details',getAgencyById )
 // Customer dashboard routes - protected by customer role
 router.get('/profile', authenticate, authorizeRoles(['CUSTOMER']), getProfile);
 router.get('/bookings', authenticate, authorizeRoles(['CUSTOMER']), getMyBookings);

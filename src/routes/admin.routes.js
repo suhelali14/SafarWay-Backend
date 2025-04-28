@@ -12,6 +12,7 @@ const {
   validateUpdateSupportTicket,
   validateAddTicketResponse
 } = require('../validators/admin.validator');
+const { checkRedisStatus } = require('../middleware/cache.middleware');
 
 // Apply authentication and admin authorization to all routes
 router.use(authenticate, authorizeRoles(['SAFARWAY_ADMIN']));
@@ -62,4 +63,58 @@ router.get('/support/tickets/:id', adminController.getSupportTicketById);
 router.put('/support/tickets/:id', validateUpdateSupportTicket, adminController.updateSupportTicket);
 router.post('/support/tickets/:id/respond', validateAddTicketResponse, adminController.addSupportTicketResponse);
 
+// Redis status endpoint
+router.get('/redis/status', async (req, res) => {
+  try {
+    const redisStatus = await checkRedisStatus();
+    
+    res.status(200).json({
+      success: true,
+      timestamp: new Date().toISOString(),
+      data: redisStatus
+    });
+  } catch (error) {
+    console.error('Error checking Redis status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error checking Redis status',
+      error: error.message
+    });
+  }
+});
+
+// System status endpoint
+router.get('/system/status', async (req, res) => {
+  try {
+    // Check Redis status
+    const redisStatus = await checkRedisStatus();
+    
+    // Get basic system info
+    const systemInfo = {
+      timestamp: new Date().toISOString(),
+      nodejs: {
+        version: process.version,
+        platform: process.platform,
+        arch: process.arch,
+        memoryUsage: process.memoryUsage(),
+      },
+      redis: redisStatus,
+      uptime: process.uptime()
+    };
+    
+    res.status(200).json({
+      success: true,
+      data: systemInfo
+    });
+  } catch (error) {
+    console.error('Error checking system status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error checking system status',
+      error: error.message
+    });
+  }
+});
+
+// Export the router
 module.exports = router; 

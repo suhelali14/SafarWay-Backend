@@ -204,6 +204,14 @@ model TourPackage {
   destinations Destination[]
   inclusions   Inclusion[]
   exclusions   Exclusion[]
+
+  // Indexes for optimized queries
+  @@index([status])
+  @@index([tourType])
+  @@index([pricePerPerson])
+  @@index([agencyId])
+  @@index([createdAt])
+  @@index([destination])
 }
 
 model Itinerary {
