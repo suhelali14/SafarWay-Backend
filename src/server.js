@@ -27,14 +27,14 @@ const agencyRoutes = require('./routes/agency.routes');
 const agencyPublicRoutes = require('./routes/agencyPublic.routes');
 const searchRoutes = require('./routes/search.routes');
 const healthRoutes = require('./routes/health.routes');
-
+const paymentRoutes = require('./routes/payment.routes');
 // Optional routes - only import if they exist
-let uploadRoutes, messageRoutes, analyticsRoutes, paymentRoutes, webhookRoutes;
+let uploadRoutes, messageRoutes, analyticsRoutes, webhookRoutes;
 try {
   uploadRoutes = require('./routes/upload.routes');
   messageRoutes = require('./routes/message.routes');
   analyticsRoutes = require('./routes/analytics.routes');
-  paymentRoutes = require('./routes/payment.routes');
+  
   webhookRoutes = require('./routes/webhook.routes');
 } catch (error) {
   console.log('Some optional routes were not found:', error.message);
@@ -100,12 +100,12 @@ async function initializeApp() {
   app.use('/api/agency', agencyRoutes);
   app.use('/api/admin', adminRoutes);
   app.use('/api/bookings', bookingRoutes);
-  
+  app.use('/api/payments', paymentRoutes);
   // Register optional routes if they exist
   if (uploadRoutes) app.use('/api/uploads', uploadRoutes);
   if (messageRoutes) app.use('/api/messages', messageRoutes);
   if (analyticsRoutes) app.use('/api/analytics', analyticsRoutes);
-  if (paymentRoutes) app.use('/api/payments', paymentRoutes);
+ 
   if (webhookRoutes) app.use('/api/webhooks', webhookRoutes);
   
   // Error handling

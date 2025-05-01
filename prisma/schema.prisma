@@ -41,11 +41,14 @@ enum BookingStatus {
   CONFIRMED
   CANCELLED
   COMPLETED
+  PENDING_APPROVAL
+  PENDING_PAYMENT
+  RESERVED
 }
 
 enum PaymentStatus {
   PENDING
-  PAID
+  SUCCESS
   REFUNDED
   PARTIALLY_REFUNDED
 }
@@ -68,6 +71,16 @@ enum TicketPriority {
   LOW
   MEDIUM
   HIGH
+}
+
+enum PaymentMode {
+  PARTIAL
+  FULL
+}
+
+enum PaymentType {
+  PARTIAL
+  FULL
 }
 
 model User {
@@ -119,25 +132,27 @@ model Session {
 }
 
 model Agency {
-  id           String    @id @default(uuid())
+  id           String   @id @default(uuid())
   name         String
   description  String?
   address      String?
   contactEmail String
   contactPhone String
   logo         String?
-  media        String[] // Array of media URLs
-  verifiedBy   String? // ID of the admin who verified
-  verifiedAt   DateTime?
-  status       String    @default("PENDING") // PENDING, ACTIVE, INACTIVE, REJECTED
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  mediaUrls    String[] // Array of media URLs
+  coverImage   String?
 
-  coverImage            String?
+  verifiedByAdminId String? // ID of the admin who verified
+  verifiedAt        DateTime?
+  status            String    @default("PENDING") // PENDING, ACTIVE, INACTIVE, REJECTED
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
   verificationDocuments VerificationDocument[]
   settings              AgencySettings?
 
-  // Relations
   users         User[]
   tourPackages  TourPackage[]
   bookings      Booking[]
@@ -231,18 +246,61 @@ model Itinerary {
   tourPackage   TourPackage @relation(fields: [tourPackageId], references: [id])
 }
 
+model BookingPerson {
+  id           String           @id @default(uuid())
+  fullName     String
+  dateOfBirth  DateTime
+  email        String?
+  phoneNumber  String?
+
+  booking      Booking          @relation(fields: [bookingId], references: [id])
+  bookingId    String
+
+  documents    PersonDocument[] // 👈 one-to-many relation
+}
+
+model PersonDocument {
+  id              String   @id @default(uuid())
+  documentType    String   // e.g., "Passport", "Aadhaar", "Visa", etc.
+  documentNumber  String
+  fileUrl         String?  // Optional if you're uploading scanned copy or image
+
+  person          BookingPerson  @relation(fields: [personId], references: [id])
+  personId        String
+}
+
+model Payment {
+  id            String   @id @default(uuid())
+  amount        Float
+  status        PaymentStatus   // SUCCESS / FAILED / PENDING
+  paymentType   PaymentType     // PARTIAL / FULL
+  createdAt     DateTime @default(now())
+
+  booking       Booking  @relation(fields: [bookingId], references: [id])
+  bookingId     String
+}
+
 model Booking {
-  id              String        @id @default(uuid())
-  startDate       DateTime
-  endDate         DateTime? // Added endDate field
-  numberOfPeople  Int
-  totalPrice      Float
-  status          BookingStatus @default(PENDING)
-  paymentStatus   PaymentStatus @default(PENDING)
-  refundRequested Boolean       @default(false)
-  refundStatus    RefundStatus?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  id                 String        @id @default(uuid())
+  startDate          DateTime
+  endDate            DateTime? // Added endDate field
+  numberOfPeople     Int
+  totalPrice         Float
+  platformFee        Float
+  agencyPayoutAmount Float
+  status             BookingStatus @default(PENDING)
+  paymentStatus      PaymentStatus @default(PENDING)
+  paymentmMethod     String
+  cashfreeOrderId    String
+  transactionId      String
+  payoutStatus       String
+  refundRequested    Boolean       @default(false)
+  refundStatus       RefundStatus?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  paymentMode         PaymentMode
+  agencyApproval      Boolean         @default(false)
+  partialAmountPaid   Boolean         @default(false)
 
   // Relations
   agencyId      String
@@ -255,6 +313,10 @@ model Booking {
   agency        Agency         @relation(fields: [agencyId], references: [id])
   refundRequest RefundRequest?
   Review        Review?
+  travelers           BookingPerson[] // List of persons (adults, kids, etc.)
+  payments            Payment[]       // Payment history
+
+  notes               String?         // Optional for admin/agency use
 }
 
 model RefundRequest {

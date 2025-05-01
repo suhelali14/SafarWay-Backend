@@ -14,7 +14,9 @@ const {
   getWishlist,
   getValidOffers,
   getDashboardStats,
-  getAgencyById
+  getAgencyById,
+  getBookingById,
+  requestCancellation
 } = require('../controllers/customer.controller');
 const { authenticate, authorizeRoles } = require('../middleware/auth.middleware');
 const { getAllPackages, getPackageById } = require('../controllers/package.controller');
@@ -40,6 +42,11 @@ router.get('/agency-public/:id/details',getAgencyById )
 // Customer dashboard routes - protected by customer role
 router.get('/profile', authenticate, authorizeRoles(['CUSTOMER']), getProfile);
 router.get('/bookings', authenticate, authorizeRoles(['CUSTOMER']), getMyBookings);
+
+router.get('/my-bookings', authenticate, getMyBookings);
+router.get('/:bookingId', authenticate, getBookingById);
+router.post('/:bookingId/cancel', authenticate, requestCancellation);
+
 router.get('/trips/ongoing', authenticate, authorizeRoles(['CUSTOMER']), getOngoingTrips);
 router.get('/trips/upcoming', authenticate, authorizeRoles(['CUSTOMER']), getUpcomingTrips);
 router.get('/packages/recommended', authenticate, authorizeRoles(['CUSTOMER']), getRecommendedPackages);

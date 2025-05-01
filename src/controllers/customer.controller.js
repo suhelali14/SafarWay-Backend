@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { getBookingByIdService, getMyBookingsService, arequestCancellationService } = require('../services/booking.service');
 
 // Get all customers with pagination and filtering
 exports.getAllCustomers = async (req, res) => {
@@ -215,6 +216,7 @@ exports.getCustomerById = async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching customer:', error);
+
     res.status(500).json({
       success: false,
       message: 'Failed to fetch customer',
@@ -537,57 +539,7 @@ exports.getProfile = async (req, res) => {
   }
 };
 
-// Get my bookings
-exports.getMyBookings = async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const { status } = req.query;
-    
-    const where = { userId };
-    if (status) {
-      where.status = status;
-    }
-    
-    const bookings = await prisma.booking.findMany({
-      where,
-      include: {
-        tourPackage: {
-          select: {
-            id: true,
-            title: true,
-            subtitle: true,
-            coverImage: true,
-            pricePerPerson: true,
-            duration: true,
-            tourType: true,
-            agency: {
-              select: {
-                id: true,
-                name: true
-              }
-            }
-          }
-        }
-      },
-      orderBy: {
-        createdAt: 'desc'
-      }
-    });
-    
-    res.status(200).json({
-      success: true,
-      data: bookings,
-      count: bookings.length
-    });
-  } catch (error) {
-    console.error('Error fetching bookings:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch bookings',
-      error: error.message
-    });
-  }
-};
+
 
 // Get ongoing trips
 exports.getOngoingTrips = async (req, res) => {
@@ -1263,3 +1215,61 @@ exports.getAgencyById = async (req, res) => {
     res.status(500).json({ message: 'Error fetching agency', error: error.message });
   }
 };
+
+
+
+
+exports.getMyBookings= async(req, res, next)=> {
+  try {
+    const userId = req.user?.id;
+    if (!userId) throw new ApiError(401, 'Unauthorized');
+
+    const { status, sort } = req.query;
+    const bookings = await getMyBookingsService(userId, {
+      status,
+      sort,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: bookings,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+exports.getBookingById = async(req, res, next)=> {
+  try {
+    const userId = req.user?.id;
+    if (!userId) throw new ApiError(401, 'Unauthorized');
+
+    const { bookingId } = req.params;
+    const booking = await getBookingByIdService(bookingId, userId);
+
+    res.status(200).json({
+      success: true,
+      data: booking,
+    });
+  } catch (error) {
+    console.error('Error fetching booking:', error);
+    next(error);
+  }
+}
+
+exports.requestCancellation = async(req, res, next)=> {
+  try {
+    const userId = req.user?.id;
+    if (!userId) throw new ApiError(401, 'Unauthorized');
+
+    const { bookingId } = req.params;
+    const { reason } = req.body;
+    if (!reason) throw new ApiError(400, 'Cancellation reason is required');
+
+    const result = await arequestCancellationService(bookingId, userId, reason);
+
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+}

@@ -163,6 +163,8 @@ const TTL_CONFIG = {
   'user:bookings': 30,
   'user:wishlist': 30,
   'user:profile': 60,
+  'bookings:failure':6000,
+  'bookings:confirmation': 6000,
 };
 
 // Generate cache key from request
@@ -241,6 +243,14 @@ const getTTL = (cacheKey) => {
   }
   if (cacheKey.includes('packages') && cacheKey.includes('tourType=')) {
     return TTL_CONFIG['packages:list:tourType'];
+  }
+  if(cacheKey.includes('booking') && cacheKey.includes('confirmation')) {
+
+    return TTL_CONFIG['bookings:confirmation'];
+
+  }
+  if(cacheKey.includes('bookings') && cacheKey.includes('failure')) {
+    return TTL_CONFIG['bookings:failure'];
   }
   for (const [prefix, ttl] of Object.entries(TTL_CONFIG)) {
     if (cacheKey.includes(prefix)) {
