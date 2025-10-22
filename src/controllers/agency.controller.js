@@ -778,13 +778,16 @@ const deletePackage = async (req, res) => {
 // Bookings
 const getBookings = async (req, res) => {
   try {
+    const agencyId = req.user.agencyId;
 
-    const bookings = await prisma.booking.findMany({ select: {agencyId: req.user.agencyId} })
+    const bookings = await prisma.booking.findMany({
+      where: { agencyId: agencyId }, 
+    });
 
     res.json(bookings);
   } catch (error) {
-    console.error('Error getting package:', error);
-    res.status(500).json({ message: 'Failed to Load package', error: error.message });
+    console.error('Error getting bookings:', error);
+    res.status(500).json({ message: 'Failed to load bookings', error: error.message });
   }
 };
 

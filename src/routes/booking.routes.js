@@ -5,6 +5,7 @@ const {
   getBookingById,
   getMyBookings,
   updateBookingStatus,
+  createOfflineBooking,
 } = require('../controllers/booking.controller');
 const { validateBooking } = require('../middleware/validation.middleware');
 const { authenticate, authorizeRoles } = require('../middleware/auth.middleware');
@@ -17,6 +18,7 @@ router.get('/', (req, res) => {
 // Create a new booking (Customer only)
 router.post('/', authenticate, authorizeRoles(['CUSTOMER']), validateBooking, createBooking);
 
+router.post('/offline/create',authenticate, authorizeRoles(['AGENCY_ADMIN', 'AGENCY_USER']), createOfflineBooking);
 // Get customer's bookings
 router.get('/customer/bookings', authenticate, authorizeRoles(['CUSTOMER']), getMyBookings);
 

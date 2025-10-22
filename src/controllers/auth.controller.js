@@ -13,6 +13,7 @@ const generateToken = (userId, role) => {
   );
 };
 
+
 // Register a new customer
 const registerCustomer = async (req, res) => {
   try {

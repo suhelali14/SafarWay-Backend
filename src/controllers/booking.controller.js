@@ -4,7 +4,11 @@ const ApiError = require('../utils/ApiError');
 // --- Cashfree Integration (Backend) ---
 // For making HTTP requests to Cashfree
 const { Cashfree } = require('cashfree-pg');
+const {
+  generateInviteToken,
+  sendInviteEmail,
 
+} = require('../controllers/invite.controller');
 console.log('Cashfree object:', Cashfree);
 // Cashfree SDK Configuration
 Cashfree.XClientId = process.env.CASHFREE_CLIENT_ID;
@@ -14,7 +18,7 @@ Cashfree.XEnvironment = 'SANDBOX'; // Direct string-based environment setting
 // Environment Variables
 const CASHFREE_PAYMENT_SUCCESS_URL = process.env.CASHFREE_PAYMENT_SUCCESS_URL || 'http://localhost:5173/booking/confirmation';
 const CASHFREE_PAYMENT_FAILURE_URL = process.env.CASHFREE_PAYMENT_FAILURE_URL || 'http://localhost:5173/bookings/failed';
-
+const FRONTEND_URL= process.env.FRONTEND_URL || 'http://localhost:5173';
 // Get all bookings (Admin/Agency only)
 exports.getAllBookings = async (req, res, next) => {
   try {
@@ -184,7 +188,7 @@ exports.createBooking = async (req, res, next) => {
     // PAYMENT INITIATION
     const initiatePaymentAmount = paymentMode === 'FULL' ? totalPrice : platformFee;
     console.time('Payment Initiation');
-    const paymentResponse = await initiateFullPayment(booking.id, initiatePaymentAmount);
+    const paymentResponse = await initiateFullPayment(booking.id, initiatePaymentAmount,"CUSTOMER");
     console.timeEnd('Payment Initiation');
 
     if (paymentResponse?.paymentLink) {
@@ -408,8 +412,214 @@ exports.getAgencyBookings = async (req, res, next) => {
 }; 
 
 
+
+// Create offline booking
+exports.createOfflineBooking = async (req, res, next) => {
+  let booking;
+  try {
+    console.time('createOfflineBooking Total');
+    const {
+      tourPackageId,
+      startDate,
+      numberOfPeople,
+      totalPrice,
+      remarks,
+      travelers
+    } = req.body;
+
+    // Validate required fields
+    if (!tourPackageId || !startDate || !numberOfPeople || !totalPrice || !travelers) {
+      throw new ApiError(400, 'Missing required fields');
+    }
+
+    // Validate at least one traveler has a phone number
+    if (!travelers.some(traveler => traveler.phoneNumber)) {
+      throw new ApiError(400, 'At least one traveler must provide a phone number');
+    }
+
+    // Validate tour package and agency
+    console.time('Tour Package Lookup');
+    const tourPackage = await prisma.tourPackage.findUnique({
+      where: { id: tourPackageId },
+    });
+    console.timeEnd('Tour Package Lookup');
+
+    if (!tourPackage) {
+      throw new ApiError(404, 'Tour package not found');
+    }
+
+    // Validate user is authorized
+    if (
+      req.user.role !== 'SAFARWAY_ADMIN' &&
+      (req.user.role !== 'AGENCY_ADMIN' && req.user.role !== 'AGENCY_USER') ||
+      req.user.agencyId !== tourPackage.agencyId
+    ) {
+      throw new ApiError(403, 'Not authorized to create offline booking for this tour package');
+    }
+
+    // Validate startDate matches tour package
+    const packageStartDate = new Date(tourPackage.startDate).toISOString().split('T')[0];
+    const submittedStartDate = new Date(startDate).toISOString().split('T')[0];
+    if (packageStartDate !== submittedStartDate) {
+      throw new ApiError(400, 'Start date must match the tour package start date');
+    }
+
+    // Validate totalPrice
+    const expectedPrice = tourPackage.pricePerPerson * numberOfPeople;
+    if (totalPrice !== expectedPrice) {
+      throw new ApiError(400, 'Total price must match the calculated price');
+    }
+
+    // Calculate platform fee and agency payout
+    const platformFee = totalPrice ;
+    const agencyPayoutAmount = totalPrice - platformFee;
+
+    // Create temporary customer for booking (primary customer)
+    console.time('Customer Creation');
+    const fallbackEmail = `offline-${tourPackageId}-${req.user.id}-${Date.now()}@safarway.com`;
+    const primaryEmail = travelers.find(t => t.email)?.email || fallbackEmail;
+    const primaryInviteToken = generateInviteToken(primaryEmail, 'CUSTOMER', null);
+    const customer = await prisma.customer.create({
+      data: {
+        user: {
+          create: {
+            email: primaryEmail,
+            role: 'CUSTOMER',
+            status: 'INVITED',
+            inviteToken: primaryInviteToken,
+            invitedByUserId: req.user.id,
+            invitedAt: new Date(),
+          },
+        },
+      },
+      include: { user: true },
+    });
+    console.timeEnd('Customer Creation');
+
+    // Send onboarding emails to all travelers
+    console.time('Send Onboarding Emails');
+    const emailPromises = travelers.map(async (traveler, index) => {
+      const email = traveler.email || `${fallbackEmail}-${index}`;
+      // Skip if email is already used (e.g., primaryEmail)
+      if (email === primaryEmail) return;
+      try {
+        // Create a user for the traveler (not linked to booking's customer)
+        const inviteToken = generateInviteToken(email, 'CUSTOMER', null);
+        await prisma.user.create({
+          data: {
+            email,
+            role: 'CUSTOMER',
+            status: 'INVITED',
+            inviteToken,
+            invitedByUserId: req.user.id,
+            invitedAt: new Date(),
+          },
+        });
+        await sendInviteEmail(email, 'CUSTOMER', inviteToken);
+        console.log(`Onboarding email sent to ${email}`);
+      } catch (emailError) {
+        console.error(`Failed to send onboarding email to ${email}:`, emailError);
+      }
+    });
+    // Send email to primary customer
+    try {
+      await sendInviteEmail(primaryEmail, 'CUSTOMER', primaryInviteToken);
+      console.log(`Onboarding email sent to ${primaryEmail}`);
+    } catch (emailError) {
+      console.error(`Failed to send onboarding email to ${primaryEmail}:`, emailError);
+    }
+    // Wait for all email promises to resolve
+    await Promise.all(emailPromises);
+    console.timeEnd('Send Onboarding Emails');
+
+    // Create booking
+    console.time('Booking Creation');
+    booking = await prisma.booking.create({
+      data: {
+        startDate: new Date(startDate),
+        endDate: new Date(tourPackage.endDate) || null,
+        numberOfPeople,
+        totalPrice,
+        platformFee,
+        agencyPayoutAmount,
+        paymentMode: 'FULL',
+        paymentmMethod: 'CASHFREE',
+        status: 'PENDING_PAYMENT',
+        cashfreeOrderId: '',
+        transactionId: '',
+        payoutStatus: 'PENDING',
+        notes: remarks,
+        agency: { connect: { id: tourPackage.agencyId } },
+        user: { connect: { id: req.user.id } },
+        customer: { connect: { id: customer.id } },
+        tourPackage: { connect: { id: tourPackageId } },
+        travelers: {
+          create: travelers.map(traveler => ({
+            fullName: traveler.fullName,
+            email: traveler.email,
+            phoneNumber: traveler.phoneNumber,
+            dateOfBirth: new Date(traveler.dateOfBirth),
+            documents: {
+              create: traveler.documents.map(doc => ({
+                documentType: doc.documentType,
+                documentNumber: doc.documentNumber,
+                fileUrl: doc.fileUrl || null,
+              })),
+            },
+          })),
+        },
+      },
+      include: { travelers: { include: { documents: true } } },
+    });
+    console.timeEnd('Booking Creation');
+
+    // Initiate Cashfree payment for platform fee
+    console.time('Payment Initiation');
+    const paymentResponse = await initiateFullPayment(booking.id, platformFee , "AGENCY");
+    console.timeEnd('Payment Initiation');
+
+    if (!paymentResponse?.paymentLink) {
+      console.error('Payment initiation failed:', paymentResponse);
+      await prisma.booking.update({
+        where: { id: booking.id },
+        data: { status: 'PENDING' },
+      });
+      throw new ApiError(500, 'Failed to initiate payment', paymentResponse);
+    }
+
+    // Update booking with Cashfree order ID
+    console.time('Booking Update');
+    await prisma.booking.update({
+      where: { id: booking.id },
+      data: { cashfreeOrderId: paymentResponse.orderId },
+    });
+    console.timeEnd('Booking Update');
+
+    console.timeEnd('createOfflineBooking Total');
+    res.status(201).json({
+      success: true,
+      bookingId: booking.id,
+      paymentLink: paymentResponse.paymentLink,
+      paymentSessionId: paymentResponse.paymentSessionId,
+      platformFee,
+      agencyPayoutAmount,
+    });
+  } catch (error) {
+    console.error('Error creating offline booking:', error);
+    if (booking?.id) {
+      await prisma.booking.update({
+        where: { id: booking.id },
+        data: { status: 'PENDING' },
+      });
+    }
+    console.timeEnd('createOfflineBooking Total');
+    next(error);
+  }
+};
+
+
 // Initiate Full Payment with Cashfree SDK
-async function initiateFullPayment(bookingId, amount) {
+async function initiateFullPayment(bookingId, amount, initBy) {
   try {
     const orderId = `order_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
     const orderPayload = {
@@ -423,8 +633,10 @@ async function initiateFullPayment(bookingId, amount) {
         customer_phone: '9876543210',
       },
       order_meta: {
-        return_url: `${CASHFREE_PAYMENT_SUCCESS_URL}?bookingId=${bookingId}&cashfreeOrderId=${orderId}`,
-        notify_url: `${CASHFREE_PAYMENT_FAILURE_URL}?bookingId=${bookingId}&cashfreeOrderId=${orderId}`,
+        
+        return_url: initBy=="CUSTOMER" ? `${CASHFREE_PAYMENT_SUCCESS_URL}?bookingId=${bookingId}&cashfreeOrderId=${orderId}` : `${FRONTEND_URL}/agency/bookings`,
+        notify_url: initBy=="CUSTOMER" ? `${CASHFREE_PAYMENT_FAILURE_URL}?bookingId=${bookingId}&cashfreeOrderId=${orderId}`: `${FRONTEND_URL}/agency/bookings`,
+      
       },
       order_note: `Booking ID: ${bookingId}`,
     };

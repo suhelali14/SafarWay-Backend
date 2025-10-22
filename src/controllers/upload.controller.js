@@ -16,6 +16,40 @@ const uploadImage = async (req, res) => {
   }
 };
 
+// Upload multiple media files for posts
+const uploadMedia = async (req, res) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No files uploaded'
+      });
+    }
+
+    // Generate URLs for uploaded files
+    const urls = req.files.map(file => {
+      return `${req.protocol}://${req.get('host')}/uploads/media/${file.filename}`;
+    });
+
+    res.json({
+      success: true,
+      message: 'Media files uploaded successfully',
+      data: {
+        urls: urls,
+        count: urls.length
+      }
+    });
+  } catch (error) {
+    console.error('Media upload error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Upload failed',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   uploadImage,
+  uploadMedia
 }; 

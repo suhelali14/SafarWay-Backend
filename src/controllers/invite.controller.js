@@ -347,4 +347,6 @@ module.exports = {
   resendInvite,
   revokeInvite,
   verifyInviteToken,
+  sendInviteEmail,
+  generateInviteToken,
 }; 

@@ -28,6 +28,8 @@ app.use('/api/admin', require('./routes/admin.routes'));
 app.use('/api/support', require('./routes/support.routes'));
 app.use('/api/agency/users', require('./routes/agencyUsers.routes'));
 app.use('/api/agency-public', require('./routes/agencyPublic.routes'));
+app.use('/api/upload', require('./routes/upload.routes'));
+app.use('/api/posts', require('./routes/post.routes'));
 
 // Error handling middleware
 app.use((err, req, res, next) => {

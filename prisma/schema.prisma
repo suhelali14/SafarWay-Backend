@@ -83,6 +83,36 @@ enum PaymentType {
   FULL
 }
 
+enum PostType {
+  PHOTO
+  REEL
+  CAROUSEL
+}
+
+enum PostStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+  HIDDEN
+  REPORTED
+}
+
+enum CommentStatus {
+  ACTIVE
+  HIDDEN
+  REPORTED
+  DELETED
+}
+
+enum ReportReason {
+  SPAM
+  INAPPROPRIATE_CONTENT
+  HARASSMENT
+  COPYRIGHT
+  FAKE_REVIEW
+  OTHER
+}
+
 model User {
   id              String     @id @default(uuid())
   name            String?
@@ -106,7 +136,7 @@ model User {
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 
-  // Relations
+    // Relations
   bookings             Booking[]
   refundRequests       RefundRequest[]
   supportTickets       SupportTicket[]
@@ -117,6 +147,19 @@ model User {
   reviews              Review[]
   mediaLikes           MediaLike[]
   subscriptions        Subscription[]
+  
+  // Post System Relations
+  posts                Post[]
+  postLikes            PostLike[]
+  postComments         PostComment[]
+  postCommentLikes     PostCommentLike[]
+  postSaves            PostSave[]
+  postShares           PostShare[]
+  postReports          PostReport[]
+  postCommentReports   PostCommentReport[]
+  postTags             PostTag[]
+  postViews            PostView[]
+  postCollections      PostCollection[]
 }
 
 model Session {
@@ -159,6 +202,7 @@ model Agency {
   reviews       Review[]
   mediaItems    AgencyMedia[]
   subscriptions Subscription[]
+  posts         Post[] // Agency posts/content
 }
 
 model Customer {
@@ -219,6 +263,7 @@ model TourPackage {
   destinations Destination[]
   inclusions   Inclusion[]
   exclusions   Exclusion[]
+  posts        Post[]        // Posts about this tour package
 
   // Indexes for optimized queries
   @@index([status])
@@ -315,6 +360,7 @@ model Booking {
   Review        Review?
   travelers           BookingPerson[] // List of persons (adults, kids, etc.)
   payments            Payment[]       // Payment history
+  posts               Post[]          // Posts related to this booking
 
   notes               String?         // Optional for admin/agency use
 }
@@ -524,4 +570,247 @@ model Subscription {
   updatedAt    DateTime @updatedAt
 
   @@unique([userId, agencyId])
+}
+
+// ============ POST SYSTEM MODELS ============
+
+model Post {
+  id              String     @id @default(uuid())
+  type            PostType   @default(PHOTO)
+  caption         String?    @db.Text
+  mediaUrls       String[]   // Array of image/video URLs
+  thumbnailUrl    String?    // Thumbnail for reels
+  duration        Int?       // Duration in seconds for reels
+  location        String?
+  status          PostStatus @default(PUBLISHED)
+  isVerified      Boolean    @default(false) // Verified travel post
+  viewCount       Int        @default(0)
+  shareCount      Int        @default(0)
+  
+  // Business Logic Fields
+  isEligible      Boolean    @default(false) // Can user post about this trip
+  tripCompleted   Boolean    @default(false) // Has the trip been completed
+  
+  // Relations
+  userId          String
+  user            User       @relation(fields: [userId], references: [id])
+  agencyId        String
+  agency          Agency     @relation(fields: [agencyId], references: [id])
+  tourPackageId   String
+  tourPackage     TourPackage @relation(fields: [tourPackageId], references: [id])
+  bookingId       String
+  booking         Booking    @relation(fields: [bookingId], references: [id])
+  
+  // Post Interactions
+  likes           PostLike[]
+  comments        PostComment[]
+  saves           PostSave[]
+  shares          PostShare[]
+  reports         PostReport[]
+  tags            PostTag[]
+  hashtags        PostHashtag[]
+  views           PostView[]
+  collectionItems PostCollectionItem[]
+  
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@index([userId])
+  @@index([agencyId])
+  @@index([tourPackageId])
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
+  @@index([isVerified])
+}
+
+model PostLike {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, postId])
+  @@index([postId])
+}
+
+model PostComment {
+  id              String        @id @default(uuid())
+  content         String        @db.Text
+  status          CommentStatus @default(ACTIVE)
+  likesCount      Int           @default(0)
+  
+  // Relations
+  userId          String
+  user            User          @relation(fields: [userId], references: [id])
+  postId          String
+  post            Post          @relation(fields: [postId], references: [id], onDelete: Cascade)
+  
+  // Nested Comments (Replies)
+  parentCommentId String?
+  parentComment   PostComment?  @relation("CommentReplies", fields: [parentCommentId], references: [id])
+  replies         PostComment[] @relation("CommentReplies")
+  
+  // Comment Interactions
+  likes           PostCommentLike[]
+  reports         PostCommentReport[]
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([postId])
+  @@index([userId])
+  @@index([parentCommentId])
+  @@index([status])
+}
+
+model PostCommentLike {
+  id        String      @id @default(uuid())
+  userId    String
+  user      User        @relation(fields: [userId], references: [id])
+  commentId String
+  comment   PostComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  createdAt DateTime    @default(now())
+
+  @@unique([userId, commentId])
+  @@index([commentId])
+}
+
+model PostSave {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, postId])
+  @@index([userId])
+  @@index([postId])
+}
+
+model PostShare {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  platform  String?  // whatsapp, facebook, instagram, etc.
+  createdAt DateTime @default(now())
+
+  @@index([postId])
+  @@index([userId])
+}
+
+model PostReport {
+  id          String       @id @default(uuid())
+  reason      ReportReason
+  description String?      @db.Text
+  status      String       @default("PENDING") // PENDING, REVIEWED, RESOLVED
+  
+  // Relations
+  userId      String
+  user        User         @relation(fields: [userId], references: [id])
+  postId      String
+  post        Post         @relation(fields: [postId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([postId])
+  @@index([status])
+}
+
+model PostCommentReport {
+  id          String       @id @default(uuid())
+  reason      ReportReason
+  description String?      @db.Text
+  status      String       @default("PENDING") // PENDING, REVIEWED, RESOLVED
+  
+  // Relations
+  userId      String
+  user        User         @relation(fields: [userId], references: [id])
+  commentId   String
+  comment     PostComment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([commentId])
+  @@index([status])
+}
+
+model PostTag {
+  id        String   @id @default(uuid())
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String   // Tagged user
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([postId, userId])
+  @@index([postId])
+  @@index([userId])
+}
+
+model PostHashtag {
+  id        String   @id @default(uuid())
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  hashtag   String   // e.g., "#kerala", "#adventure"
+  createdAt DateTime @default(now())
+
+  @@index([postId])
+  @@index([hashtag])
+}
+
+model PostView {
+  id        String   @id @default(uuid())
+  userId    String?  // Null for anonymous views
+  user      User?    @relation(fields: [userId], references: [id])
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([postId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// Collection/Album feature
+model PostCollection {
+  id          String              @id @default(uuid())
+  name        String
+  description String?             @db.Text
+  coverImage  String?
+  isPublic    Boolean             @default(true)
+  
+  // Relations
+  userId      String
+  user        User                @relation(fields: [userId], references: [id])
+  posts       PostCollectionItem[]
+  
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@index([userId])
+  @@index([isPublic])
+}
+
+model PostCollectionItem {
+  id           String         @id @default(uuid())
+  collectionId String
+  collection   PostCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  postId       String
+  post         Post           @relation(fields: [postId], references: [id], onDelete: Cascade)
+  order        Int            @default(0)
+  createdAt    DateTime       @default(now())
+
+  @@unique([collectionId, postId])
+  @@index([collectionId])
+  @@index([postId])
 }

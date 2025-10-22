@@ -20,6 +20,7 @@ const bookingRoutes = require('./routes/booking.routes');
 
 const inviteRoutes = require('./routes/invite.routes');
 const customerRoutes = require('./routes/customer.routes');
+const postRoutes = require('./routes/post.routes');
 
 
 const adminRoutes = require('./routes/admin.routes');
@@ -101,6 +102,7 @@ async function initializeApp() {
   app.use('/api/admin', adminRoutes);
   app.use('/api/bookings', bookingRoutes);
   app.use('/api/payments', paymentRoutes);
+  app.use('/api/posts', postRoutes);
   // Register optional routes if they exist
   if (uploadRoutes) app.use('/api/uploads', uploadRoutes);
   if (messageRoutes) app.use('/api/messages', messageRoutes);
